@@ -142,9 +142,8 @@ export function generateScenarios({
         Math.abs(r.netPointsAfterMargin) < Math.abs(best.netPointsAfterMargin) ? r : best,
         sortedRates[0]
       );
-      // 4. Smart pick: lowest recoupment period = best value
-      // For each rate, calculate: what does it actually cost the borrower to get this rate?
-      // Then find the option where recoupment is shortest
+      // 4. Smart pick: best 5-year net savings (savings over 60mo minus closing costs)
+      // This is a better metric than pure recoupment — captures both savings AND cost
       const smartPick = sortedRates.reduce((best, r) => {
         const ratePI = calcPI(newLoanAmount, r.adjustedRate, 30);
         const savings = currentTotalPayment - (ratePI + currentEscrow + remainingPayments);
@@ -152,17 +151,10 @@ export function generateScenarios({
         const pointsCostDollar = r.borrowerPays > 0 ? (r.borrowerPays / 100) * newLoanAmount : 0;
         const creditDollar = r.lenderCredit > 0 ? (r.lenderCredit / 100) * newLoanAmount : 0;
         const netCost = Math.max(0, (titleCharges || 0) + pointsCostDollar - creditDollar);
-        const breakeven = netCost > 0 ? Math.ceil(netCost / savings) : 0;
+        const fiveYearNet = (savings * 60) - netCost;
 
-        if (!best) return { ...r, _breakeven: breakeven, _savings: savings };
-
-        // Primary: lower recoupment wins
-        // If recoupment within 3 months, prefer higher monthly savings
-        const diff = breakeven - best._breakeven;
-        if (Math.abs(diff) <= 3) {
-          return savings > best._savings ? { ...r, _breakeven: breakeven, _savings: savings } : best;
-        }
-        return breakeven < best._breakeven ? { ...r, _breakeven: breakeven, _savings: savings } : best;
+        if (!best) return { ...r, _fiveYearNet: fiveYearNet, _savings: savings };
+        return fiveYearNet > best._fiveYearNet ? { ...r, _fiveYearNet: fiveYearNet, _savings: savings } : best;
       }, null);
 
       const candidates = [
@@ -297,32 +289,18 @@ export function generateScenarios({
     }
   }
 
-  // Recommend best — PRIMARY: recoupment period. SECONDARY: monthly savings.
-  // VA gets preference when recoupment is close (within 3 months)
+  // Recommend best — uses composite score (40% 5yr net savings, 30% monthly savings,
+  // 20% recoupment, 10% lifetime interest). VA gets a score bonus when veteran.
   let recommended = null;
   if (scenarios.length > 0) {
     recommended = scenarios.reduce((best, s) => {
       if (!best) return s;
 
-      const sBreak = s.breakevenMonths || 0;
-      const bBreak = best.breakevenMonths || 0;
+      // VA bonus: add 5 points to score for VA when client is a veteran
+      const sScore = s.score + (s.program === 'VA' && isVeteran ? 5 : 0);
+      const bScore = best.score + (best.program === 'VA' && isVeteran ? 5 : 0);
 
-      // VA bonus: prefer VA if recoupment is within 6 months of best
-      const sIsVA = s.program === 'VA' && isVeteran;
-      const bIsVA = best.program === 'VA' && isVeteran;
-
-      // Adjust effective breakeven for VA preference
-      const sEffectiveBreak = sIsVA ? Math.max(0, sBreak - 3) : sBreak;
-      const bEffectiveBreak = bIsVA ? Math.max(0, bBreak - 3) : bBreak;
-
-      const diff = sEffectiveBreak - bEffectiveBreak;
-
-      // If recoupment within 3 months → prefer higher savings
-      if (Math.abs(diff) <= 3) {
-        return s.monthlySavings > best.monthlySavings ? s : best;
-      }
-      // Otherwise pick lower recoupment
-      return sEffectiveBreak < bEffectiveBreak ? s : best;
+      return sScore > bScore ? s : best;
     }, null);
   }
 
@@ -336,3 +314,4 @@ export function generateScenarios({
     remainingPayments: Math.round(remainingPayments),
   };
 }
+
