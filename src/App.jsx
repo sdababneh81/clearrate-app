@@ -82,6 +82,7 @@ export default function App() {
   // Margin state
   const [marginBPS, setMarginBPS] = useState('');
   const [marginDollar, setMarginDollar] = useState('');
+  const [maxPointsPct, setMaxPointsPct] = useState('5');
 
   const [isVeteran, setIsVeteran] = useState(null);
   const [yearsInHome, setYearsInHome] = useState('');
@@ -278,6 +279,7 @@ export default function App() {
         marginBPS: parseFloat(marginBPS) || 0,
         marginDollar: parseFloat(marginDollar) || 0,
         yearsInHome: parseFloat(yearsInHome) || null,
+        maxPointsPct: parseFloat(maxPointsPct) ?? 5.0,
       });
       if (!res.scenarios.length) { setError('No scenarios generated. Upload a rate sheet or enter a manual rate.'); setGenerating(false); return; }
       setResult(res); setStep(4);
@@ -290,7 +292,7 @@ export default function App() {
     setCreditStatus('idle'); setRateSheetStatus('idle'); setCreditFile(null); setRateSheetFile(null);
     setDebts([]); setProfile({ borrowerName:'', ficoScore:'', estimatedValue:'', currentBalance:'', originalLoanAmount:'', currentRate:'', currentTermRemaining:'', currentPayment:'', escrow:'', mortgageLender:'', titleCharges:'', cashOutAmount:'', manualRate:'', propertyAddress:'' });
     setIsVeteran(null); setSelectedPrograms(['Conventional','FHA']); setGoalType('rate_term');
-    setMarginBPS(''); setMarginDollar(''); setYearsInHome('');
+    setMarginBPS(''); setMarginDollar(''); setYearsInHome(''); setMaxPointsPct('5');
   };
 
   return (
@@ -446,6 +448,21 @@ export default function App() {
                     {marginBPS} BPS = {(parseFloat(marginBPS)/100).toFixed(3)}% added to rate · {fmt$(parseFloat(marginDollar))} rolled into loan balance
                   </div>
                 )}
+                <div className="mt-4 pt-4 border-t border-amber-200">
+                  <Field label="Max Points Borrower Can Pay (%)" hint="Rates requiring more points than this are excluded">
+                    <div className="flex items-center gap-3">
+                      <input className={inp} type="number" step="0.5" min="0" max="10" value={maxPointsPct} onChange={e => setMaxPointsPct(e.target.value)} placeholder="5.0" style={{maxWidth:'120px'}} />
+                      <div className="flex gap-1.5">
+                        {['0','1','2','3','5'].map(v => (
+                          <button key={v} onClick={() => setMaxPointsPct(v)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${maxPointsPct === v ? 'border-amber-500 bg-amber-100 text-amber-800' : 'border-amber-200 text-amber-600 bg-white hover:border-amber-400'}`}>
+                            {v === '0' ? 'Par only' : `${v}%`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </Field>
+                </div>
               </div>
             </Card>
 
@@ -623,4 +640,5 @@ export default function App() {
     </div>
   );
 }
+
 
