@@ -100,13 +100,16 @@ Rules:
 }
 
 export async function parseRateSheet(file, clientProfile, adminMargins = {}) {
-  // clientProfile contains FICO, LTV, loanType, purpose so we can ask Claude
-  // to apply the correct LLPAs and return ADJUSTED rates for this specific borrower
-  const { ficoScore, ltv, loanType, purpose } = clientProfile || {};
+  const { ficoScore, ltv, loanType, purpose, currentRate } = clientProfile || {};
 
   let content;
-  const marginNote = `Admin/broker margins: FHA +${adminMargins.fha || 0.5}%, Conventional +${adminMargins.conv || 0.5}%, VA +${adminMargins.va || 0.375}%`;
-  const borrowerContext = ficoScore ? `Borrower profile: FICO ${ficoScore}, LTV ~${ltv || 'unknown'}%, loan type: ${loanType || 'VA'}, purpose: ${purpose || 'rate/term refi'}.` : '';
+
+  // FIX: adjustedRate = base rate only (no margin baked in — engine handles margin separately)
+  // FIX: do NOT ask Claude to filter by current rate — engine handles that
+  // FIX: pass currentRate to Claude for context only, not for filtering
+  const borrowerContext = ficoScore
+    ? `Borrower profile: FICO ${ficoScore}, LTV ~${ltv || 'unknown'}%, loan type: ${loanType || 'Conventional'}, purpose: ${purpose || 'rate/term refi'}${currentRate ? `, current rate: ${currentRate}%` : ''}.`
+    : '';
 
   if (file.type === 'application/pdf') {
     const base64 = await fileToBase64(file);
@@ -114,32 +117,40 @@ export async function parseRateSheet(file, clientProfile, adminMargins = {}) {
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
       {
         type: 'text',
-        text: `You are a mortgage pricing expert. This is a wholesale lender rate sheet. ${borrowerContext} ${marginNote}
+        text: `You are a mortgage pricing expert. This is a wholesale lender rate sheet. ${borrowerContext}
 
-Return ONLY valid JSON. Be concise — include ONLY the 8 most relevant rate tiers per program (rates that would make sense for this borrower). No markdown, no explanation.
+Return ONLY valid JSON. No markdown, no explanation.
 
-{"programs":[{"type":"VA","term":30,"isARM":false,"rates":[{"rate":5.5,"netPoints":-1.5,"adjustedRate":5.875},{"rate":5.75,"netPoints":-0.3,"adjustedRate":6.125},{"rate":6.0,"netPoints":0.5,"adjustedRate":6.375}]},{"type":"VA","term":30,"isARM":true,"armType":"5/6 SOFR","rates":[...]}],"effectiveDate":"18-Jun-26","llpasApplied":["FICO 680-699: +0.25","LTV 85-90: +1.00"]}
+Include ALL available rate tiers per program (minimum 8 rates per program). Include every rate row — do not filter by current borrower rate.
 
-Rules:
-- Use 30-day lock column
-- netPoints: base price adjusted for ALL LLPAs (FICO score band, LTV band, purpose). Negative = lender credit. Positive = borrower pays points.
-- adjustedRate: rate + broker margin (${marginNote})
-- Apply FICO and LTV adjustments from the pricing adjustment tables
-- Include VA 30yr fixed AND VA 5/6 ARM if available
-- Include Conventional 30yr fixed only if better than VA
-- ONLY include rates below the borrower current rate — skip anything above it
-- Keep response under 2000 tokens total`
+Return this exact structure:
+{"programs":[{"type":"VA","term":30,"isARM":false,"rates":[{"rate":5.5,"netPoints":-1.5},{"rate":5.75,"netPoints":-0.3},{"rate":6.0,"netPoints":0.5}]},{"type":"VA","term":30,"isARM":true,"armType":"5/6 SOFR","rates":[...]}],"effectiveDate":"18-Jun-26","llpasApplied":["FICO 680-699: +0.25","LTV 85-90: +1.00"]}
+
+Field definitions:
+- rate: the note rate (e.g. 6.5)
+- netPoints: the BASE price from the rate sheet, adjusted for FICO and LTV LLPAs. Negative = lender credit to borrower. Positive = borrower pays discount points.
+- Use the 30-day lock column
+- Apply FICO band and LTV band pricing adjustments (LLPAs) from the adjustment tables in the sheet
+- Do NOT add any broker margin — return raw lender pricing only
+- Include VA 30yr fixed, VA 5/6 ARM if available
+- Include Conventional 30yr fixed if available
+- Include FHA 30yr fixed if available
+- type must be exactly: "VA", "Conventional", or "FHA"
+- llpasApplied: list which LLPA adjustments you applied and their values`
       }
     ];
   } else {
     const text = await file.text();
-    content = [{ 
-      type: 'text', 
-      text: `Parse this rate sheet for borrower: ${borrowerContext}. Apply LLPAs and return JSON.\n\nFormat: {"programs":[{"type":"VA","term":30,"isARM":false,"armType":null,"rates":[{"rate":5.75,"basePoints":-0.3,"llpaAdjustment":0,"netPoints":-0.3,"credits":0.3,"adjustedRate":6.125,"netPriceToLender":99.7}]}],"effectiveDate":"","llpasApplied":[]}\n\n${text.substring(0, 15000)}`
+    content = [{
+      type: 'text',
+      text: `Parse this rate sheet for borrower: ${borrowerContext}. Apply LLPAs and return ALL rate tiers (don't filter by current rate).\n\nReturn JSON: {"programs":[{"type":"VA","term":30,"isARM":false,"armType":null,"rates":[{"rate":5.75,"netPoints":-0.3},{"rate":6.0,"netPoints":0.0}]}],"effectiveDate":"","llpasApplied":[]}\n\nnetPoints = base price + LLPA adjustments. Negative = lender credit. No broker margin.\n\n${text.substring(0, 15000)}`
     }];
   }
 
   const apiKey2 = import.meta.env.VITE_ANTHROPIC_API_KEY;
+
+  console.log('[ClearRate] Sending rate sheet to Claude...', { borrowerContext });
+
   const response = await fetch(CLAUDE_API, {
     method: 'POST',
     headers: {
@@ -151,18 +162,50 @@ Rules:
     body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 6000, messages: [{ role: 'user', content }] })
   });
 
-  if (!response.ok) throw new Error(`Rate sheet API error ${response.status}`);
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error('[ClearRate] Rate sheet API error:', response.status, errText);
+    throw new Error(`Rate sheet API error ${response.status}: ${errText.substring(0, 200)}`);
+  }
 
   const data = await response.json();
   const raw = data.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
-  try { return JSON.parse(raw); }
-  catch (e) { 
+
+  console.log('[ClearRate] Raw Claude response (rate sheet):', raw.substring(0, 1000));
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
     // Try to extract partial JSON
     const match = raw.match(/\{[\s\S]*"programs"[\s\S]*\}/);
     if (match) {
-      try { return JSON.parse(match[0]); }
-      catch(e2) { throw new Error('Could not parse rate sheet. Raw: ' + raw.substring(0, 300)); }
+      try {
+        parsed = JSON.parse(match[0]);
+      } catch(e2) {
+        console.error('[ClearRate] JSON parse failed. Raw response:', raw);
+        throw new Error('Could not parse rate sheet JSON. Raw: ' + raw.substring(0, 500));
+      }
+    } else {
+      console.error('[ClearRate] No programs key found in response. Raw:', raw);
+      throw new Error('Rate sheet response missing "programs" key. Raw: ' + raw.substring(0, 500));
     }
-    throw new Error('Could not parse rate sheet. Raw: ' + raw.substring(0, 300)); 
   }
+
+  // Normalize: ensure adjustedRate = rate (engine applies margin, not parser)
+  if (parsed.programs) {
+    parsed.programs = parsed.programs.map(prog => ({
+      ...prog,
+      rates: (prog.rates || []).map(r => ({
+        ...r,
+        adjustedRate: r.rate, // adjustedRate = base note rate; margin applied in engine
+      }))
+    }));
+  }
+
+  console.log('[ClearRate] Parsed rate sheet:', JSON.stringify(parsed, null, 2));
+  console.log('[ClearRate] Programs found:', parsed.programs?.length || 0,
+    parsed.programs?.map(p => `${p.type} (${p.rates?.length || 0} rates)`).join(', '));
+
+  return parsed;
 }
