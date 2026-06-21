@@ -35,18 +35,29 @@ export function calcBreakeven(netCost, monthlySavings) {
   return Math.ceil(netCost / monthlySavings);
 }
 
-// Score a rate option — balances monthly savings vs recoupment
+// Score a rate option — balances monthly savings vs recoupment vs upfront cost
 // Higher score = better recommendation
 export function scoreRateOption(scenario) {
-  const { monthlySavings, breakevenMonths, netClosingCosts } = scenario;
+  const { monthlySavings, breakevenMonths, netClosingCosts, borrowerPaysPct, isARM, rate } = scenario;
   if (monthlySavings <= 0) return -9999;
-  // Penalize long recoupment heavily — target < 24 months is ideal
+
+  // Penalize long recoupment — target < 24 months is ideal
   const recoupmentPenalty = breakevenMonths > 48 ? -500 :
     breakevenMonths > 36 ? -200 :
     breakevenMonths > 24 ? -50 : 0;
+
   // Reward monthly savings
   const savingsScore = monthlySavings * 5;
-  // Reward low/no closing costs
-  const costScore = Math.max(0, 200 - netClosingCosts / 100);
-  return savingsScore + costScore + recoupmentPenalty;
+
+  // Penalize points cost — borrower paying points reduces the value
+  const pointsPenalty = (borrowerPaysPct || 0) > 0 ? -(borrowerPaysPct * 300) : 0;
+
+  // Reward low closing costs
+  const costScore = Math.max(0, 200 - (netClosingCosts || 0) / 100);
+
+  // ARM penalty: ARM should only beat fixed if rate is meaningfully lower
+  // If ARM rate >= fixed rate at same or higher cost, penalize heavily
+  const armPenalty = isARM ? -100 : 0; // baseline ARM penalty to prefer fixed when equal
+
+  return savingsScore + costScore + recoupmentPenalty + pointsPenalty + armPenalty;
 }
