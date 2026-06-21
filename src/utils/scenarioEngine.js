@@ -222,6 +222,62 @@ export function generateScenarios({
     }
   }
 
+  // If no ARM scenarios were generated but we have fixed ones, create estimated ARM options
+  const hasARM = scenarios.some(s => s.isARM);
+  const hasFixed = scenarios.some(s => !s.isARM);
+  
+  if (!hasARM && hasFixed) {
+    // Generate estimated 5/6 and 7/6 ARM scenarios based on typical ARM discount vs 30yr fixed
+    // ARM rates are typically 0.5-1.0% lower than 30yr fixed at same points
+    const fixedScenarios = scenarios.filter(s => !s.isARM);
+    const bestFixed = fixedScenarios.sort((a, b) => b.score - a.score)[0];
+    
+    if (bestFixed) {
+      const armTypes = [
+        { type: '5/6 SOFR ARM', rateDiscount: 0.75, desc: 'Fixed 5 yrs, adjusts every 6 mo' },
+        { type: '7/6 SOFR ARM', rateDiscount: 0.5, desc: 'Fixed 7 yrs, adjusts every 6 mo' },
+      ];
+      
+      for (const arm of armTypes) {
+        const armRate = Math.round((bestFixed.rate - arm.rateDiscount) * 1000) / 1000;
+        if (armRate <= 0) continue;
+        const goal = bestFixed.goal;
+        const newLoanAmount = bestFixed.newLoanAmount;
+        const newPI = calcPI(newLoanAmount, armRate, 30);
+        const currentEscrow = bestFixed.currentEscrow;
+        const remainingPayments = bestFixed.remainingPayments;
+        const newTotalPayment = newPI + currentEscrow + remainingPayments;
+        const monthlySavings = bestFixed.currentTotalPayment - newTotalPayment;
+        if (monthlySavings <= 0) continue;
+        
+        const netClosingCosts = bestFixed.titleCharges || 0; // assume par pricing for ARM estimate
+        const breakevenMonths = calcBreakeven(netClosingCosts, monthlySavings);
+        
+        scenarios.push({
+          ...bestFixed,
+          isARM: true,
+          armType: arm.type,
+          optionLabel: 'Best Rate',
+          optionDesc: arm.desc + ' — estimated pricing',
+          rate: armRate,
+          borrowerPaysPct: 0,
+          lenderCreditPct: 0,
+          pointsCost: 0,
+          lenderCredit: 0,
+          netClosingCosts,
+          breakevenMonths,
+          newPI: Math.round(newPI),
+          newTotalPayment: Math.round(newTotalPayment),
+          monthlySavings: Math.round(monthlySavings),
+          annualSavings: Math.round(monthlySavings * 12),
+          fiveYearSavings: Math.round(monthlySavings * 60),
+          isFallback: true,
+          score: scoreRateOption({ monthlySavings, breakevenMonths, netClosingCosts }),
+        });
+      }
+    }
+  }
+
   // Recommend best
   let recommended = null;
   if (scenarios.length > 0) {
