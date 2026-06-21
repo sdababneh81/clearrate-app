@@ -74,7 +74,7 @@ export default function App() {
     borrowerName: '', ficoScore: '', estimatedValue: '',
     // Current mortgage
     currentBalance: '', originalLoanAmount: '', currentRate: '', currentTermRemaining: '',
-    currentPayment: '', escrow: '', mortgageLender: '',
+    currentPayment: '', escrow: '', mortgageLender: '', propertyAddress: '',
     // New loan
     titleCharges: '', cashOutAmount: '', manualRate: '',
   });
@@ -84,6 +84,7 @@ export default function App() {
   const [marginDollar, setMarginDollar] = useState('');
 
   const [isVeteran, setIsVeteran] = useState(null);
+  const [propertyLookupStatus, setPropertyLookupStatus] = useState('idle'); // idle | loading | found | notfound
   const [debts, setDebts] = useState([]);
   const [goalType, setGoalType] = useState('rate_term');
   const [selectedPrograms, setSelectedPrograms] = useState(['Conventional', 'FHA']);
@@ -141,6 +142,7 @@ export default function App() {
       const data = await parseCreditReport(file);
       setParsedCredit(data);
       if (data.borrowerName) setP('borrowerName', data.borrowerName);
+      if (data.address) setP('propertyAddress', data.address);
       if (data.mortgage) {
         setP('currentBalance', data.mortgage.balance || '');
         setP('mortgageLender', data.mortgage.lender || '');
@@ -157,6 +159,8 @@ export default function App() {
       const tradelineDebts = (data.tradelines || []).map(t => ({ ...t, selected: true, analysis: analyzeDebt(t, 6.5) }));
       setDebts(tradelineDebts);
       setCreditStatus('success');
+      // Auto-lookup property value from address
+      if (data.address) lookupProperty(data.address);
     } catch (e) { setCreditStatus('error'); setError('Credit report error: ' + e.message); }
   };
 
@@ -166,6 +170,44 @@ export default function App() {
       const data = await parseRateSheet(file, adminMargins);
       setParsedRateSheet(data); setRateSheetStatus('success');
     } catch (e) { setRateSheetStatus('error'); setError('Rate sheet error: ' + e.message); }
+  };
+
+  const lookupProperty = async (address) => {
+    if (!address) return;
+    setPropertyLookupStatus('loading');
+    try {
+      const parts = address.split(',').map(s => s.trim());
+      if (parts.length < 3) return;
+      const streetAddr = parts[0];
+      const city = parts[1];
+      const stateZip = parts[2].trim().split(' ');
+      const state = stateZip[0];
+      const zip = stateZip[1] || '';
+
+      const res = await fetch('https://avzxphkomiizcxdaezcv.supabase.co/functions/v1/address-lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: streetAddr, city, state, zip })
+      });
+      const data = await res.json();
+      const match = data?.matches?.[0];
+      if (!match) return;
+
+      // Auto-fill estimated value
+      if (match.property?.valueEstimate) {
+        setP('estimatedValue', String(Math.round(match.property.valueEstimate)));
+        setPropertyLookupStatus('found');
+      } else {
+        setPropertyLookupStatus('notfound');
+      }
+      // Auto-fill current rate from lien1 if not already set
+      if (match.lien1?.interestRate && !profile.currentRate) {
+        setP('currentRate', String(match.lien1.interestRate));
+      }
+    } catch (e) {
+      console.log('Property lookup failed:', e.message);
+      setPropertyLookupStatus('notfound');
+    }
   };
 
   const handleToggleDebt = (index) => setDebts(prev => prev.map((d, i) => i === index ? { ...d, selected: !d.selected } : d));
@@ -219,7 +261,7 @@ export default function App() {
   const handleReset = () => {
     setStep(0); setResult(null); setParsedCredit(null); setParsedRateSheet(null);
     setCreditStatus('idle'); setRateSheetStatus('idle'); setCreditFile(null); setRateSheetFile(null);
-    setDebts([]); setProfile({ borrowerName:'', ficoScore:'', estimatedValue:'', currentBalance:'', originalLoanAmount:'', currentRate:'', currentTermRemaining:'', currentPayment:'', escrow:'', mortgageLender:'', titleCharges:'', cashOutAmount:'', manualRate:'' });
+    setDebts([]); setProfile({ borrowerName:'', ficoScore:'', estimatedValue:'', currentBalance:'', originalLoanAmount:'', currentRate:'', currentTermRemaining:'', currentPayment:'', escrow:'', mortgageLender:'', titleCharges:'', cashOutAmount:'', manualRate:'', propertyAddress:'' });
     setIsVeteran(null); setSelectedPrograms(['Conventional','FHA']); setGoalType('rate_term');
     setMarginBPS(''); setMarginDollar('');
   };
@@ -342,7 +384,7 @@ export default function App() {
                 <Field label="FICO Score" hint="Middle score from credit report">
                   <input className={inp} type="number" value={profile.ficoScore} onChange={e => setP('ficoScore', e.target.value)} placeholder="680" />
                 </Field>
-                <Field label="Estimated Property Value *">
+                <Field label="Estimated Property Value *" hint={propertyLookupStatus === 'loading' ? '🔍 Looking up via P1 API...' : propertyLookupStatus === 'found' ? '✅ Auto-filled from P1 property lookup' : propertyLookupStatus === 'notfound' ? '⚠️ Not found — enter manually' : ''}>
                   <input className={inp} type="number" value={profile.estimatedValue} onChange={e => setP('estimatedValue', e.target.value)} placeholder="450000" />
                 </Field>
               </div>
