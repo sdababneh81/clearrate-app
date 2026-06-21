@@ -103,51 +103,41 @@ export async function parseRateSheet(file, clientProfile, adminMargins = {}) {
   const { ficoScore, ltv, loanType, purpose, currentRate } = clientProfile || {};
 
   let content;
-
-  // FIX: adjustedRate = base rate only (no margin baked in — engine handles margin separately)
-  // FIX: do NOT ask Claude to filter by current rate — engine handles that
-  // FIX: pass currentRate to Claude for context only, not for filtering
   const borrowerContext = ficoScore
-    ? `Borrower profile: FICO ${ficoScore}, LTV ~${ltv || 'unknown'}%, loan type: ${loanType || 'Conventional'}, purpose: ${purpose || 'rate/term refi'}${currentRate ? `, current rate: ${currentRate}%` : ''}.`
+    ? `Borrower: FICO ${ficoScore}, LTV ~${ltv || 'unknown'}%, loan type: ${loanType || 'Conventional'}, purpose: ${purpose || 'rate/term refi'}${currentRate ? `, current rate: ${currentRate}%` : ''}.`
     : '';
+
+  const systemPrompt = `You are a mortgage rate sheet parser. You output ONLY valid JSON. You never explain, never use markdown, never add any text before or after the JSON object. Your entire response must be parseable by JSON.parse(). Start your response with { and end with }.`;
+
+  const userPrompt = file.type === 'application/pdf'
+    ? `This is a wholesale lender rate sheet PDF. ${borrowerContext}
+
+Output ONLY a JSON object. No explanation. No markdown. No steps. Start with { immediately.
+
+Required format:
+{"programs":[{"type":"VA","term":30,"isARM":false,"armType":null,"rates":[{"rate":6.5,"netPoints":-1.5},{"rate":6.75,"netPoints":-0.5},{"rate":7.0,"netPoints":0.25}]},{"type":"Conventional","term":30,"isARM":false,"armType":null,"rates":[{"rate":7.0,"netPoints":-0.5}]}],"effectiveDate":"18-Jun-26","llpasApplied":["FICO 680-699 +0.25","LTV 75-80 +0.25"]}
+
+Rules:
+- type: must be "VA", "Conventional", or "FHA" only
+- rate: the note rate number (e.g. 6.5)
+- netPoints: base price from 30-day lock column PLUS FICO and LTV LLPA adjustments. Negative = lender credit. Positive = borrower pays points.
+- Include ALL rate rows from each program — do not skip any
+- Include every program visible: VA fixed, VA ARM, Conventional, FHA
+- Do NOT add broker margin — raw lender pricing only
+- llpasApplied: list each LLPA you applied with its value`
+    : `Parse this rate sheet. ${borrowerContext} Output ONLY JSON starting with {.\n\n{"programs":[{"type":"VA","term":30,"isARM":false,"armType":null,"rates":[{"rate":6.5,"netPoints":-1.5}]}],"effectiveDate":"","llpasApplied":[]}\n\nnetPoints = lender price + LLPA adjustments. No broker margin.\n\n${(await file.text()).substring(0, 15000)}`;
 
   if (file.type === 'application/pdf') {
     const base64 = await fileToBase64(file);
     content = [
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
-      {
-        type: 'text',
-        text: `You are a mortgage pricing expert. This is a wholesale lender rate sheet. ${borrowerContext}
-
-Return ONLY valid JSON. No markdown, no explanation.
-
-Include ALL available rate tiers per program (minimum 8 rates per program). Include every rate row — do not filter by current borrower rate.
-
-Return this exact structure:
-{"programs":[{"type":"VA","term":30,"isARM":false,"rates":[{"rate":5.5,"netPoints":-1.5},{"rate":5.75,"netPoints":-0.3},{"rate":6.0,"netPoints":0.5}]},{"type":"VA","term":30,"isARM":true,"armType":"5/6 SOFR","rates":[...]}],"effectiveDate":"18-Jun-26","llpasApplied":["FICO 680-699: +0.25","LTV 85-90: +1.00"]}
-
-Field definitions:
-- rate: the note rate (e.g. 6.5)
-- netPoints: the BASE price from the rate sheet, adjusted for FICO and LTV LLPAs. Negative = lender credit to borrower. Positive = borrower pays discount points.
-- Use the 30-day lock column
-- Apply FICO band and LTV band pricing adjustments (LLPAs) from the adjustment tables in the sheet
-- Do NOT add any broker margin — return raw lender pricing only
-- Include VA 30yr fixed, VA 5/6 ARM if available
-- Include Conventional 30yr fixed if available
-- Include FHA 30yr fixed if available
-- type must be exactly: "VA", "Conventional", or "FHA"
-- llpasApplied: list which LLPA adjustments you applied and their values`
-      }
+      { type: 'text', text: userPrompt }
     ];
   } else {
-    const text = await file.text();
-    content = [{
-      type: 'text',
-      text: `Parse this rate sheet for borrower: ${borrowerContext}. Apply LLPAs and return ALL rate tiers (don't filter by current rate).\n\nReturn JSON: {"programs":[{"type":"VA","term":30,"isARM":false,"armType":null,"rates":[{"rate":5.75,"netPoints":-0.3},{"rate":6.0,"netPoints":0.0}]}],"effectiveDate":"","llpasApplied":[]}\n\nnetPoints = base price + LLPA adjustments. Negative = lender credit. No broker margin.\n\n${text.substring(0, 15000)}`
-    }];
+    content = [{ type: 'text', text: userPrompt }];
   }
 
-  const apiKey2 = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
 
   console.log('[ClearRate] Sending rate sheet to Claude...', { borrowerContext });
 
@@ -155,11 +145,16 @@ Field definitions:
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': apiKey2,
+      'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true'
     },
-    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 6000, messages: [{ role: 'user', content }] })
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 6000,
+      system: systemPrompt,
+      messages: [{ role: 'user', content }]
+    })
   });
 
   if (!response.ok) {
@@ -169,43 +164,49 @@ Field definitions:
   }
 
   const data = await response.json();
-  const raw = data.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
+  const raw = data.content.map(b => b.text || '').join('').trim();
 
-  console.log('[ClearRate] Raw Claude response (rate sheet):', raw.substring(0, 1000));
+  console.log('[ClearRate] Raw Claude response length:', raw.length);
+  console.log('[ClearRate] First 500 chars:', raw.substring(0, 500));
+
+  // Strip any accidental markdown fences
+  const cleaned = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
 
   let parsed;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(cleaned);
   } catch (e) {
-    // Try to extract partial JSON
-    const match = raw.match(/\{[\s\S]*"programs"[\s\S]*\}/);
+    // Try to extract JSON object from response
+    const match = cleaned.match(/(\{[\s\S]*"programs"[\s\S]*\})/);
     if (match) {
       try {
-        parsed = JSON.parse(match[0]);
+        parsed = JSON.parse(match[1]);
+        console.warn('[ClearRate] Had to extract JSON from response — system prompt not respected');
       } catch(e2) {
-        console.error('[ClearRate] JSON parse failed. Raw response:', raw);
-        throw new Error('Could not parse rate sheet JSON. Raw: ' + raw.substring(0, 500));
+        console.error('[ClearRate] JSON parse failed. Full raw response:', raw);
+        throw new Error('Rate sheet parse failed. Claude returned non-JSON. See console for raw output.');
       }
     } else {
-      console.error('[ClearRate] No programs key found in response. Raw:', raw);
-      throw new Error('Rate sheet response missing "programs" key. Raw: ' + raw.substring(0, 500));
+      console.error('[ClearRate] No JSON object found. Full raw response:', raw);
+      throw new Error('Rate sheet parse failed — no JSON in response. See browser console for details.');
     }
   }
 
-  // Normalize: ensure adjustedRate = rate (engine applies margin, not parser)
+  // Normalize: adjustedRate = rate (engine applies user's margin, not parser)
   if (parsed.programs) {
     parsed.programs = parsed.programs.map(prog => ({
       ...prog,
       rates: (prog.rates || []).map(r => ({
         ...r,
-        adjustedRate: r.rate, // adjustedRate = base note rate; margin applied in engine
+        adjustedRate: r.rate,
       }))
     }));
   }
 
-  console.log('[ClearRate] Parsed rate sheet:', JSON.stringify(parsed, null, 2));
-  console.log('[ClearRate] Programs found:', parsed.programs?.length || 0,
-    parsed.programs?.map(p => `${p.type} (${p.rates?.length || 0} rates)`).join(', '));
+  console.log('[ClearRate] ✅ Rate sheet parsed successfully');
+  console.log('[ClearRate] Programs:', parsed.programs?.length || 0,
+    parsed.programs?.map(p => `${p.type} ${p.isARM ? p.armType || 'ARM' : '30yr fixed'} (${p.rates?.length || 0} rates)`).join(' | '));
+  console.log('[ClearRate] Full parsed output:', JSON.stringify(parsed, null, 2));
 
   return parsed;
 }
