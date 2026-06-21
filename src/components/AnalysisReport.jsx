@@ -27,12 +27,12 @@ function ScenarioCard({ scenario, isRecommended, isSelected, onSelect }) {
       )}
       <div className="flex items-start justify-between mb-2">
         <div>
-          <span className="font-bold text-sm text-blue-800">{scenario.program}</span>
+          <span className="font-bold text-sm text-blue-800">{scenario.program} {scenario.isARM ? scenario.armType || 'ARM' : '30yr Fixed'}</span>
           <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{scenario.optionLabel}</span>
         </div>
         <div className="text-right">
           <div className="text-xl font-bold text-gray-900">{pct(scenario.rate)}</div>
-          <div className="text-xs text-gray-500">{scenario.points > 0 ? `+${scenario.points} pts` : scenario.credits > 0 ? `${money(scenario.credits)} credit` : 'Par'}</div>
+          <div className="text-xs text-gray-500">{scenario.borrowerPaysPct > 0 ? `+${scenario.borrowerPaysPct?.toFixed(2)} pts` : scenario.lenderCreditPct > 0 ? `${money(scenario.lenderCredit)} credit` : 'Par'}</div>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 mt-3">
@@ -132,7 +132,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, c
             {[
               { label: 'Loan Amount', value: money(s.newLoanAmount) },
               { label: 'Interest Rate', value: pct(s.rate), blue: true },
-              { label: 'Term', value: '30 Years' },
+              { label: 'Term', value: s.isARM ? `${s.armType || 'ARM'} → 30yr` : '30 Year Fixed' },
               { label: 'New Mo. Payment', value: money(s.newPI) + '/mo', blue: true },
               { label: 'Cash Out to Client', value: s.cashOut > 0 ? '~' + money(netCashOut) : '—' },
             ].map((item, i) => (
@@ -169,13 +169,12 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, c
                 LTV: {((s.newLoanAmount / clientProfile.estimatedValue) * 100).toFixed(1)}% of {money(clientProfile.estimatedValue)} estimated value
               </div>
             )}
-            {(s.pointsCost > 0 || s.lenderCredit > 0) && (
-              <div className="mt-2 pt-2 border-t border-gray-100 text-xs space-y-1">
-                {s.pointsCost > 0 && <div className="flex justify-between text-amber-700"><span>Borrower pays points ({s.points?.toFixed(3)}%)</span><span>+{money(s.pointsCost)}</span></div>}
-                {s.lenderCredit > 0 && <div className="flex justify-between text-green-700"><span>Lender credit ({s.credits?.toFixed(3)}%)</span><span>-{money(s.lenderCredit)}</span></div>}
-                <div className="flex justify-between font-semibold"><span>Net closing costs</span><span>{money(s.netClosingCosts)}</span></div>
-              </div>
-            )}
+            <div className="mt-2 pt-2 border-t border-gray-100 text-xs space-y-1">
+              {s.borrowerPaysPct > 0 && <div className="flex justify-between text-amber-700"><span>Borrower pays points ({s.borrowerPaysPct?.toFixed(3)}%)</span><span>+{money(s.pointsCost)}</span></div>}
+              {s.lenderCreditPct > 0 && <div className="flex justify-between text-green-700"><span>Lender credit ({s.lenderCreditPct?.toFixed(3)}%)</span><span>-{money(s.lenderCredit)}</span></div>}
+              <div className="flex justify-between font-semibold"><span>Net closing costs</span><span>{money(s.netClosingCosts)}</span></div>
+              {s.marginBPS > 0 && <div className="flex justify-between text-blue-700"><span>Broker margin ({s.marginBPS} BPS)</span><span>earned as YSP</span></div>}
+            </div>
           </div>
         </div>
 
