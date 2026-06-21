@@ -27,7 +27,7 @@ export async function parseCreditReport(file) {
 Return this exact structure:
 {
   "borrowerName": "string",
-  "address": "string or null, full property address from credit report e.g. 7729 NW 21ST ST, MARGATE, FL 33063",
+  "address": "string - CURRENT ADDRESS from credit report e.g. 7729 NW 21ST ST, MARGATE, FL 33063. Include street, city, state, zip separated by commas.",
   "ficoScores": { "transunion": number|null, "equifax": number|null, "experian": number|null },
   "mortgage": {
     "lender": "string",
@@ -109,7 +109,9 @@ export async function parseRateSheet(file, adminMargins = {}) {
         type: 'text',
         text: `Extract mortgage rate tiers from this lender rate sheet. ${marginNote}
 
-Return ONLY valid JSON, no markdown:
+Focus ONLY on 30-year fixed rate programs: Conventional (CONF CONV or standard), FHA, and VA. For each program find ALL available rate tiers in the 30-day lock column.
+
+Return ONLY valid JSON, no markdown, no explanation:
 {
   "programs": [
     {
@@ -117,9 +119,7 @@ Return ONLY valid JSON, no markdown:
       "term": 30,
       "rates": [
         { "rate": number, "points": number, "credits": number, "adjustedRate": number }
-      ],
-      "ficoCutoffs": [number],
-      "ltvAdjustments": [{ "ltv": number, "adjustment": number }]
+      ]
     }
   ],
   "effectiveDate": "string"
@@ -127,9 +127,10 @@ Return ONLY valid JSON, no markdown:
 
 Rules:
 - adjustedRate = rate + admin margin for that program type
-- points is cost (positive = borrower pays), credits is lender credit (positive = lender pays)
-- Include at minimum 3 rate tiers per program: lowest rate, par (0 points/credits), highest credits
-- Only include 30-year fixed programs`
+- For points column: negative numbers = lender CREDITS (lender pays), positive numbers = POINTS (borrower pays)
+- Include ALL rate tiers listed for each program (typically 15-20 rows per program)
+- Only 30-year fixed, skip ARMs, skip high balance, skip jumbo
+- Use CONF CONV 21-30 YEAR for Conventional, VA FIXED RATE 16-30 YEAR for VA, FHA FIXED RATE 16-30 YEAR for FHA`
       }
     ];
   } else {
