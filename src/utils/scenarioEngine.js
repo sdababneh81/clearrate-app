@@ -321,6 +321,12 @@ export function generateScenarios({
     }, null);
   }
 
+  // Detect low-rate borrower situation — helps UI show a useful message
+  const isLowRateBorrower = currentRate > 0 && currentRate < 5.5;
+  const lowRateWarning = isLowRateBorrower && scenarios.length === 0
+    ? `This borrower has a ${currentRate}% rate — refinancing to today's rates (5.5–7.5%) will increase their monthly payment unless debts are consolidated or cash-out is added. Add debts to pay off or a cash-out amount to offset the higher rate and generate beneficial scenarios.`
+    : null;
+
   return {
     scenarios,
     recommended,
@@ -329,6 +335,8 @@ export function generateScenarios({
     currentEscrow: Math.round(currentEscrow),
     debtPaymentTotal: Math.round(debtPaymentTotal),
     remainingPayments: Math.round(remainingPayments),
+    lowRateWarning,
+    currentRate,
   };
 }
 
