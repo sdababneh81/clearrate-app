@@ -25,6 +25,7 @@ export function generateScenarios({
   marginBPS,
   marginDollar,
   yearsInHome,
+  maxPointsPct,
 }) {
   const {
     currentBalance,
@@ -125,10 +126,15 @@ export function generateScenarios({
         };
       }).filter(r => r !== null && r.rate > 0);
 
+      // Filter: cap borrower points at maxPointsPct (default 5%)
+      // Any rate requiring more points than the cap is excluded
+      const pointsCap = (maxPointsPct !== undefined && maxPointsPct !== null) ? maxPointsPct : 5.0;
+      const cappedRates = normalizedRates.filter(r => r.borrowerPays <= pointsCap);
+
       // Filter: only show rates that save money vs current rate
       // For very low current rates (< 4%), show best available anyway
       const maxBeneficialRate = currentRate > 4.5 ? currentRate - 0.125 : 8.5;
-      const beneficialRates = normalizedRates.filter(r => r.adjustedRate <= maxBeneficialRate);
+      const beneficialRates = cappedRates.filter(r => r.adjustedRate <= maxBeneficialRate);
       if (beneficialRates.length === 0) continue;
 
       const sortedRates = [...beneficialRates].sort((a, b) => a.adjustedRate - b.adjustedRate);
@@ -325,5 +331,6 @@ export function generateScenarios({
     remainingPayments: Math.round(remainingPayments),
   };
 }
+
 
 
