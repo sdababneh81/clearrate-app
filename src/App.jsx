@@ -177,6 +177,12 @@ export default function App() {
         purpose: 'rate/term refinance',
       };
       const data = await parseRateSheet(file, clientCtx, adminMargins);
+      console.log('Rate sheet parsed:', JSON.stringify(data, null, 2));
+      if (!data.programs || data.programs.length === 0) {
+        setRateSheetStatus('error');
+        setError('Rate sheet parsed but no programs found. Try uploading again.');
+        return;
+      }
       setParsedRateSheet(data); setRateSheetStatus('success');
     } catch (e) { setRateSheetStatus('error'); setError('Rate sheet error: ' + e.message); }
   };
