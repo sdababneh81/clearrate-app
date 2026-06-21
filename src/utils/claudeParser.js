@@ -114,50 +114,21 @@ export async function parseRateSheet(file, clientProfile, adminMargins = {}) {
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
       {
         type: 'text',
-        text: `You are a mortgage pricing expert. This is a wholesale lender rate sheet. ${borrowerContext}
+        text: `You are a mortgage pricing expert. This is a wholesale lender rate sheet. ${borrowerContext} ${marginNote}
 
-Your job:
-1. Find the base rates for 30-year fixed programs: Conventional, FHA, VA (standard, not elite/jumbo)
-2. Apply ALL relevant LLPA (loan level price adjustments) for the borrower's FICO score, LTV, and transaction type from the pricing adjustment tables on the rate sheet
-3. Also identify any ARM options (5/6, 7/6 SOFR ARM) that might benefit this borrower
-4. ${marginNote}
+Return ONLY valid JSON. Be concise — include ONLY the 8 most relevant rate tiers per program (rates that would make sense for this borrower). No markdown, no explanation.
 
-Return ONLY valid JSON, no markdown, no explanation:
-{
-  "programs": [
-    {
-      "type": "FHA|Conventional|VA",
-      "term": 30,
-      "isARM": false,
-      "armType": null,
-      "rates": [
-        {
-          "rate": number,
-          "basePoints": number,
-          "llpaAdjustment": number,
-          "netPoints": number,
-          "credits": number,
-          "adjustedRate": number,
-          "netPriceToLender": number
-        }
-      ]
-    }
-  ],
-  "effectiveDate": "string",
-  "llpasApplied": ["list of LLPA adjustments applied and their amounts"]
-}
+{"programs":[{"type":"VA","term":30,"isARM":false,"rates":[{"rate":5.5,"netPoints":-1.5,"adjustedRate":5.875},{"rate":5.75,"netPoints":-0.3,"adjustedRate":6.125},{"rate":6.0,"netPoints":0.5,"adjustedRate":6.375}]},{"type":"VA","term":30,"isARM":true,"armType":"5/6 SOFR","rates":[...]}],"effectiveDate":"18-Jun-26","llpasApplied":["FICO 680-699: +0.25","LTV 85-90: +1.00"]}
 
 Rules:
-- Use the 30-day lock column for base pricing
-- basePoints: raw points from rate table (negative = lender credits, positive = borrower pays)
-- llpaAdjustment: sum of all applicable LLPAs for this borrower (FICO, LTV, purpose, etc.)
-- netPoints: basePoints + llpaAdjustment (this is what borrower actually pays)
-- credits: if netPoints is negative, this is the lender credit amount (positive number)
-- adjustedRate: rate + broker/admin margin
-- Include ALL rate tiers (full table, typically 15-20 rows per program)
-- For VA: apply FICO score adjustments from the VA pricing adjustment table
-- Include 5/6 and 7/6 SOFR ARM options if available for VA
-- Only show programs where rates are meaningfully below the borrower's current rate`
+- Use 30-day lock column
+- netPoints: base price adjusted for ALL LLPAs (FICO score band, LTV band, purpose). Negative = lender credit. Positive = borrower pays points.
+- adjustedRate: rate + broker margin (${marginNote})
+- Apply FICO and LTV adjustments from the pricing adjustment tables
+- Include VA 30yr fixed AND VA 5/6 ARM if available
+- Include Conventional 30yr fixed only if better than VA
+- ONLY include rates below the borrower current rate — skip anything above it
+- Keep response under 2000 tokens total`
       }
     ];
   } else {
