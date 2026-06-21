@@ -111,6 +111,15 @@ export default function App() {
     return null;
   })();
 
+  // Auto-fill escrow = total payment minus P&I
+  useEffect(() => {
+    if (calculatedPI && profile.currentPayment && !profile.escrow) {
+      const pmt = parseFloat(profile.currentPayment);
+      const autoEscrow = Math.round(pmt - calculatedPI);
+      if (autoEscrow > 0) setP('escrow', String(autoEscrow));
+    }
+  }, [calculatedPI, profile.currentPayment]);
+
   // Sync margin BPS <-> dollar
   const handleMarginBPS = (val) => {
     setMarginBPS(val);
