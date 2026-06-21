@@ -144,6 +144,41 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, c
           </div>
         </div>
 
+        {/* New loan balance breakdown */}
+        <div className="border-b border-gray-200">
+          <div className="bg-gray-50 px-4 py-2 text-xs font-bold uppercase tracking-wider text-gray-500">New Loan Balance Breakdown</div>
+          <div className="px-4 py-3 space-y-2 text-sm">
+            {[
+              ['Current Mortgage Balance', s.currentBalance || clientProfile.currentBalance],
+              ['Debts Being Paid Off', s.debtBalanceTotal],
+              ['Title & Settlement Charges', s.titleCharges],
+              ...(s.marginDollar > 0 ? [['Lender Margin (rolled in)', s.marginDollar]] : []),
+              ...(s.cashOut > 0 ? [['Cash-Out Amount', s.cashOut]] : []),
+            ].map(([label, val], i, arr) => (
+              <div key={i} className={`flex justify-between py-1 ${i < arr.length - 1 ? 'border-b border-gray-100' : ''}`}>
+                <span className="text-gray-600">{label}</span>
+                <span className="font-semibold">{money(val)}</span>
+              </div>
+            ))}
+            <div className="flex justify-between pt-2 border-t-2 border-gray-300">
+              <span className="font-bold text-gray-900">New Loan Total</span>
+              <span className="font-bold text-blue-700 text-base">{money(s.newLoanAmount)}</span>
+            </div>
+            {clientProfile.estimatedValue > 0 && (
+              <div className="text-xs text-gray-400 text-right">
+                LTV: {((s.newLoanAmount / clientProfile.estimatedValue) * 100).toFixed(1)}% of {money(clientProfile.estimatedValue)} estimated value
+              </div>
+            )}
+            {(s.pointsCost > 0 || s.lenderCredit > 0) && (
+              <div className="mt-2 pt-2 border-t border-gray-100 text-xs space-y-1">
+                {s.pointsCost > 0 && <div className="flex justify-between text-amber-700"><span>Borrower pays points ({s.points?.toFixed(3)}%)</span><span>+{money(s.pointsCost)}</span></div>}
+                {s.lenderCredit > 0 && <div className="flex justify-between text-green-700"><span>Lender credit ({s.credits?.toFixed(3)}%)</span><span>-{money(s.lenderCredit)}</span></div>}
+                <div className="flex justify-between font-semibold"><span>Net closing costs</span><span>{money(s.netClosingCosts)}</span></div>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Debts paid off table */}
         <div className="border-b border-gray-200">
           <div className="bg-gray-50 px-4 py-2 text-xs font-bold uppercase tracking-wider text-gray-500">Debts Paid Off at Closing</div>
