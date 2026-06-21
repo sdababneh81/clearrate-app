@@ -27,6 +27,7 @@ export async function parseCreditReport(file) {
 Return this exact structure:
 {
   "borrowerName": "string",
+  "address": "string or null, full property address from credit report e.g. 7729 NW 21ST ST, MARGATE, FL 33063",
   "ficoScores": { "transunion": number|null, "equifax": number|null, "experian": number|null },
   "mortgage": {
     "lender": "string",
