@@ -176,13 +176,22 @@ export default function App() {
     if (!address) return;
     setPropertyLookupStatus('loading');
     try {
+      // Handle formats like "7729 NW 21ST ST, MARGATE, FL 33063"
+      // or "7729 NW 21ST ST MARGATE FL 33063"
+      let streetAddr, city, state, zip;
       const parts = address.split(',').map(s => s.trim());
-      if (parts.length < 3) return;
-      const streetAddr = parts[0];
-      const city = parts[1];
-      const stateZip = parts[2].trim().split(' ');
-      const state = stateZip[0];
-      const zip = stateZip[1] || '';
+      if (parts.length >= 3) {
+        streetAddr = parts[0];
+        city = parts[1];
+        const stateZip = parts[2].trim().split(/\s+/);
+        state = stateZip[0];
+        zip = stateZip[1] || '';
+      } else {
+        // Try to parse without commas using regex
+        const m = address.match(/^(.+?)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+([A-Z]{2})\s+(\d{5})/);
+        if (!m) { setPropertyLookupStatus('notfound'); return; }
+        streetAddr = m[1]; city = m[2]; state = m[3]; zip = m[4];
+      }
 
       const res = await fetch('https://avzxphkomiizcxdaezcv.supabase.co/functions/v1/address-lookup', {
         method: 'POST',
