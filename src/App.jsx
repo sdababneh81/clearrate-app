@@ -84,6 +84,7 @@ export default function App() {
   const [marginDollar, setMarginDollar] = useState('');
 
   const [isVeteran, setIsVeteran] = useState(null);
+  const [yearsInHome, setYearsInHome] = useState('');
   const [propertyLookupStatus, setPropertyLookupStatus] = useState('idle'); // idle | loading | found | notfound
   const [debts, setDebts] = useState([]);
   const [goalType, setGoalType] = useState('rate_term');
@@ -276,6 +277,7 @@ export default function App() {
         selectedPrograms: isVeteran ? selectedPrograms : selectedPrograms.filter(p => p !== 'VA'),
         marginBPS: parseFloat(marginBPS) || 0,
         marginDollar: parseFloat(marginDollar) || 0,
+        yearsInHome: parseFloat(yearsInHome) || null,
       });
       if (!res.scenarios.length) { setError('No scenarios generated. Upload a rate sheet or enter a manual rate.'); setGenerating(false); return; }
       setResult(res); setStep(4);
@@ -288,7 +290,7 @@ export default function App() {
     setCreditStatus('idle'); setRateSheetStatus('idle'); setCreditFile(null); setRateSheetFile(null);
     setDebts([]); setProfile({ borrowerName:'', ficoScore:'', estimatedValue:'', currentBalance:'', originalLoanAmount:'', currentRate:'', currentTermRemaining:'', currentPayment:'', escrow:'', mortgageLender:'', titleCharges:'', cashOutAmount:'', manualRate:'', propertyAddress:'' });
     setIsVeteran(null); setSelectedPrograms(['Conventional','FHA']); setGoalType('rate_term');
-    setMarginBPS(''); setMarginDollar('');
+    setMarginBPS(''); setMarginDollar(''); setYearsInHome('');
   };
 
   return (
@@ -493,6 +495,37 @@ export default function App() {
                   <Field label="Cash-Out Amount"><input className={inp} type="number" value={profile.cashOutAmount} onChange={e => setP('cashOutAmount', e.target.value)} placeholder="e.g. 50000" /></Field>
                 </div>
               )}
+
+              {/* Planning Horizon */}
+              <div className="mt-5 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                <div className="flex items-start gap-3 mb-3">
+                  <span className="text-xl">🏠</span>
+                  <div>
+                    <div className="font-semibold text-amber-900 text-sm">How long does the client plan to stay in this home?</div>
+                    <div className="text-xs text-amber-700 mt-0.5">This changes the recommendation. Selling in 3 years? Lender credits beat a lower rate that requires points.</div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {[['2','2 yrs'],['3','3 yrs'],['5','5 yrs'],['7','7 yrs'],['10','10 yrs'],['','Long-term (30yr)']].map(([val, label]) => (
+                    <button
+                      key={val}
+                      onClick={() => setYearsInHome(val)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-semibold border-2 transition-all ${
+                        yearsInHome === val
+                          ? 'border-amber-500 bg-amber-100 text-amber-800'
+                          : 'border-amber-200 text-amber-700 hover:border-amber-400 bg-white'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {yearsInHome && (
+                  <div className="mt-2 text-xs text-amber-700 font-medium">
+                    ✓ Scoring optimized for {yearsInHome}-year horizon — options that recoup before year {yearsInHome} will be prioritized
+                  </div>
+                )}
+              </div>
             </Card>
 
             <Card title="Loan Programs">
@@ -590,3 +623,4 @@ export default function App() {
     </div>
   );
 }
+
