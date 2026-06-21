@@ -24,6 +24,7 @@ export function generateScenarios({
   selectedPrograms,
   marginBPS,
   marginDollar,
+  yearsInHome,
 }) {
   const {
     currentBalance,
@@ -142,8 +143,9 @@ export function generateScenarios({
         Math.abs(r.netPointsAfterMargin) < Math.abs(best.netPointsAfterMargin) ? r : best,
         sortedRates[0]
       );
-      // 4. Smart pick: best 5-year net savings (savings over 60mo minus closing costs)
-      // This is a better metric than pure recoupment — captures both savings AND cost
+      // 4. Smart pick: best net savings over the client's planning horizon
+      // Uses yearsInHome if provided, otherwise defaults to 5 years
+      const horizonMonths = yearsInHome ? Math.min(yearsInHome * 12, 360) : 60;
       const smartPick = sortedRates.reduce((best, r) => {
         const ratePI = calcPI(newLoanAmount, r.adjustedRate, 30);
         const savings = currentTotalPayment - (ratePI + currentEscrow + remainingPayments);
@@ -151,10 +153,10 @@ export function generateScenarios({
         const pointsCostDollar = r.borrowerPays > 0 ? (r.borrowerPays / 100) * newLoanAmount : 0;
         const creditDollar = r.lenderCredit > 0 ? (r.lenderCredit / 100) * newLoanAmount : 0;
         const netCost = Math.max(0, (titleCharges || 0) + pointsCostDollar - creditDollar);
-        const fiveYearNet = (savings * 60) - netCost;
+        const horizonNet = (savings * horizonMonths) - netCost;
 
-        if (!best) return { ...r, _fiveYearNet: fiveYearNet, _savings: savings };
-        return fiveYearNet > best._fiveYearNet ? { ...r, _fiveYearNet: fiveYearNet, _savings: savings } : best;
+        if (!best) return { ...r, _horizonNet: horizonNet, _savings: savings };
+        return horizonNet > best._horizonNet ? { ...r, _horizonNet: horizonNet, _savings: savings } : best;
       }, null);
 
       const candidates = [
@@ -223,9 +225,13 @@ export function generateScenarios({
           remainingPayments,
           currentMortgagePI: Math.round(currentMortgagePI),
           currentEscrow: Math.round(currentEscrow),
+          yearsInHome: yearsInHome || null,
+          horizonMonths: yearsInHome ? Math.min(yearsInHome * 12, 360) : 60,
+          horizonSavings: Math.round(monthlySavings * (yearsInHome ? Math.min(yearsInHome * 12, 360) : 60)),
+          horizonNet: Math.round((monthlySavings * (yearsInHome ? Math.min(yearsInHome * 12, 360) : 60)) - netClosingCosts),
         };
 
-        scenario.score = scoreRateOption(scenario);
+        scenario.score = scoreRateOption(scenario, yearsInHome);
         return scenario;
       }).filter(s => s.monthlySavings > 0);
 
@@ -283,22 +289,27 @@ export function generateScenarios({
           annualSavings: Math.round(monthlySavings * 12),
           fiveYearSavings: Math.round(monthlySavings * 60),
           isFallback: true,
-          score: scoreRateOption({ monthlySavings, breakevenMonths, netClosingCosts }),
+          horizonMonths: yearsInHome ? Math.min(yearsInHome * 12, 360) : 60,
+          horizonSavings: Math.round(monthlySavings * (yearsInHome ? Math.min(yearsInHome * 12, 360) : 60)),
+          horizonNet: Math.round((monthlySavings * (yearsInHome ? Math.min(yearsInHome * 12, 360) : 60)) - (bestFixed.titleCharges || 0)),
+          yearsInHome: yearsInHome || null,
+          score: scoreRateOption({ monthlySavings, breakevenMonths, netClosingCosts, lifetimeInterestSavings: 0 }, yearsInHome),
         });
       }
     }
   }
 
-  // Recommend best — uses composite score (40% 5yr net savings, 30% monthly savings,
-  // 20% recoupment, 10% lifetime interest). VA gets a score bonus when veteran.
+  // Recommend best — uses composite score weighted by planning horizon.
+  // Short horizon (selling soon) → heavily favors lender credits over low rate + points.
+  // VA gets a score bonus when veteran.
   let recommended = null;
   if (scenarios.length > 0) {
     recommended = scenarios.reduce((best, s) => {
       if (!best) return s;
 
-      // VA bonus: add 5 points to score for VA when client is a veteran
-      const sScore = s.score + (s.program === 'VA' && isVeteran ? 5 : 0);
-      const bScore = best.score + (best.program === 'VA' && isVeteran ? 5 : 0);
+      // Re-score with yearsInHome for accurate horizon weighting
+      const sScore = scoreRateOption(s, yearsInHome) + (s.program === 'VA' && isVeteran ? 5 : 0);
+      const bScore = scoreRateOption(best, yearsInHome) + (best.program === 'VA' && isVeteran ? 5 : 0);
 
       return sScore > bScore ? s : best;
     }, null);
@@ -314,4 +325,5 @@ export function generateScenarios({
     remainingPayments: Math.round(remainingPayments),
   };
 }
+
 
