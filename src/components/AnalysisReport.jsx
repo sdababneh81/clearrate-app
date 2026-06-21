@@ -70,17 +70,33 @@ function ScenarioCard({ scenario: sc, isRecommended, isSelected, onSelect }) {
       </div>
 
       {/* Recoupment + Closing Costs */}
-      <div className={`rounded-lg px-3 py-2 flex items-center justify-between text-xs border ${
-        recoupOk ? 'bg-green-50 border-green-200' : recoupWarn ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'
-      }`}>
-        <div className="flex items-center gap-1.5">
-          <Clock className={`w-3 h-3 ${recoupOk ? 'text-green-600' : recoupWarn ? 'text-amber-600' : 'text-red-600'}`} />
-          <span className={`font-semibold ${recoupOk ? 'text-green-700' : recoupWarn ? 'text-amber-700' : 'text-red-700'}`}>
-            {sc.breakevenMonths === 0 ? 'No cost' : `${sc.breakevenMonths}mo recoup`}
+      {(() => {
+        const horizon = sc.yearsInHome ? sc.yearsInHome * 12 : null;
+        const wontRecoup = horizon && sc.breakevenMonths > 0 && sc.breakevenMonths > horizon;
+        const recoupColor = wontRecoup ? 'bg-red-50 border-red-200' : recoupOk ? 'bg-green-50 border-green-200' : recoupWarn ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200';
+        const recoupTextColor = wontRecoup ? 'text-red-700' : recoupOk ? 'text-green-700' : recoupWarn ? 'text-amber-700' : 'text-red-700';
+        const clockColor = wontRecoup ? 'text-red-500' : recoupOk ? 'text-green-600' : recoupWarn ? 'text-amber-600' : 'text-red-600';
+        return (
+          <div className={`rounded-lg px-3 py-2 flex items-center justify-between text-xs border ${recoupColor}`}>
+            <div className="flex items-center gap-1.5">
+              <Clock className={`w-3 h-3 ${clockColor}`} />
+              <span className={`font-semibold ${recoupTextColor}`}>
+                {sc.breakevenMonths === 0 ? 'No cost' : wontRecoup ? `⚠️ ${sc.breakevenMonths}mo — won't recoup` : `${sc.breakevenMonths}mo recoup`}
+              </span>
+            </div>
+            <span className="text-gray-600">Closing: {money(sc.netClosingCosts)}</span>
+          </div>
+        );
+      })()}
+      {/* Horizon savings */}
+      {sc.yearsInHome && (
+        <div className="mt-1.5 rounded-lg px-3 py-1.5 bg-blue-50 border border-blue-100 text-xs flex justify-between">
+          <span className="text-blue-600">Net savings in {sc.yearsInHome} yrs</span>
+          <span className={`font-bold ${sc.horizonNet >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
+            {sc.horizonNet >= 0 ? '+' : ''}{money(sc.horizonNet)}
           </span>
         </div>
-        <span className="text-gray-600">Closing: {money(sc.netClosingCosts)}</span>
-      </div>
+      )}
 
       {/* Points / Credits detail */}
       {(sc.borrowerPaysPct > 0 || sc.lenderCreditPct > 0) && (
@@ -239,6 +255,11 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
           <div>
             <div className="text-xs font-bold uppercase tracking-widest text-blue-300 mb-1">{companyName} | Refinance Savings Analysis</div>
             <div className="text-base font-bold">Prepared for: {clientProfile.borrowerName || 'Client'}</div>
+            {s.yearsInHome && (
+              <div className="text-blue-300 text-xs mt-0.5">
+                🏠 {s.yearsInHome}-yr horizon · Net savings before sale: {s.horizonNet >= 0 ? '+' : ''}{money(s.horizonNet || 0)}
+              </div>
+            )}
             <div className="text-blue-300 text-xs mt-0.5">{today}</div>
           </div>
           {(s === recommended || isCardRecommended(s)) && (
@@ -252,7 +273,11 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
         <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-gray-200 border-b border-gray-200">
           <SummaryCell label="Paying Now" value={`${money(currentTotalPayment)}/mo`} sub="All current obligations" />
           <SummaryCell label="After Refinance" value={`${money(s.newTotalPayment)}/mo`} sub={`P&I: ${money(s.newPI)} + Escrow: ${s.newEscrow > 0 ? money(s.newEscrow) : '—'}`} />
-          <SummaryCell label="Monthly Savings" value={`${money(s.monthlySavings)}/mo`} highlight sub={`${money(s.annualSavings)}/yr · ${money(s.fiveYearSavings)} over 5 yrs`} />
+          <SummaryCell label="Monthly Savings" value={`${money(s.monthlySavings)}/mo`} highlight
+            sub={s.yearsInHome
+              ? `${money(s.annualSavings)}/yr · ${money(s.horizonSavings || s.fiveYearSavings)} over ${s.yearsInHome} yrs`
+              : `${money(s.annualSavings)}/yr · ${money(s.fiveYearSavings)} over 5 yrs`}
+          />
           <SummaryCell label="Cash Out to Client" value={s.cashOut > 0 ? `~${money(netCashOut)}` : '—'} sub={s.cashOut > 0 ? 'Net after closing costs' : 'Rate & Term refi'} />
         </div>
 
@@ -374,3 +399,4 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
     </div>
   );
 }
+
