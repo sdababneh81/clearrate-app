@@ -1,6 +1,5 @@
 /**
  * ClearRate — Claude API PDF Parser
- * Sends PDF as base64 to Claude and extracts structured data
  */
 
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
@@ -20,10 +19,7 @@ export async function parseCreditReport(file) {
   if (file.type === 'application/pdf') {
     const base64 = await fileToBase64(file);
     content = [
-      {
-        type: 'document',
-        source: { type: 'base64', media_type: 'application/pdf', data: base64 }
-      },
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
       {
         type: 'text',
         text: `Extract all tradelines from this mortgage credit report. Return ONLY valid JSON, no markdown, no explanation.
@@ -32,28 +28,46 @@ Return this exact structure:
 {
   "borrowerName": "string",
   "ficoScores": { "transunion": number|null, "equifax": number|null, "experian": number|null },
-  "mortgage": { "lender": "string", "balance": number, "payment": number, "rate": number|null, "opened": "string" } or null,
+  "mortgage": {
+    "lender": "string",
+    "balance": number,
+    "originalAmount": number|null,
+    "payment": number|null,
+    "rate": number|null,
+    "opened": "string",
+    "monthsRemaining": number|null,
+    "originalTermMonths": number|null
+  },
   "tradelines": [
-    { "name": "string", "balance": number, "payment": number, "type": "Revolving|Auto|Student Loan|Installment|Other", "limit": number|null, "rate": number|null, "status": "open|closed|inactive", "monthsRemaining": number|null }
+    {
+      "name": "string",
+      "balance": number,
+      "payment": number,
+      "type": "Revolving|Auto|Student Loan|Installment|Other",
+      "limit": number|null,
+      "rate": number|null,
+      "status": "open|closed|inactive",
+      "monthsRemaining": number|null
+    }
   ]
 }
 
 Rules:
-- Only include open accounts with balance > 0 and payment > 0
+- Only include open tradelines with balance > 0 and payment > 0
 - Skip the mortgage (put it in the mortgage field)
 - Skip closed/inactive accounts
-- Deduplicate accounts that appear on multiple bureaus (same account reported twice) — keep one
+- Deduplicate accounts that appear on multiple bureaus — keep one
 - For FICO scores use the middle score or the lower of two if only two bureaus
+- For mortgage: originalAmount is the original loan amount, monthsRemaining is how many months are left, originalTermMonths is the original term (usually 360 for 30yr)
 - Payment is the minimum monthly payment
 - type must be exactly one of: Revolving, Auto, Student Loan, Installment, Other`
       }
     ];
   } else {
-    // text file fallback
     const text = await file.text();
     content = [{
       type: 'text',
-      text: `Extract all tradelines from this mortgage credit report text. Return ONLY valid JSON, no markdown.\n\nReturn this structure:\n{"borrowerName":"string","ficoScores":{"transunion":null,"equifax":null,"experian":null},"mortgage":{"lender":"string","balance":0,"payment":0,"rate":null,"opened":""},"tradelines":[{"name":"string","balance":0,"payment":0,"type":"Revolving","limit":null,"rate":null,"status":"open","monthsRemaining":null}]}\n\nOnly open accounts with balance > 0. Skip mortgage (put in mortgage field). Deduplicate cross-bureau.\n\n${text.substring(0, 15000)}`
+      text: `Extract all tradelines from this mortgage credit report text. Return ONLY valid JSON, no markdown.\n\nReturn: {"borrowerName":"string","ficoScores":{"transunion":null,"equifax":null,"experian":null},"mortgage":{"lender":"string","balance":0,"originalAmount":null,"payment":null,"rate":null,"opened":"","monthsRemaining":null,"originalTermMonths":null},"tradelines":[{"name":"string","balance":0,"payment":0,"type":"Revolving","limit":null,"rate":null,"status":"open","monthsRemaining":null}]}\n\nOnly open accounts with balance > 0. Skip mortgage (put in mortgage field). Deduplicate cross-bureau.\n\n${text.substring(0, 15000)}`
     }];
   }
 
@@ -68,11 +82,7 @@ Rules:
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true'
     },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
-      messages: [{ role: 'user', content }]
-    })
+    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2000, messages: [{ role: 'user', content }] })
   });
 
   if (!response.ok) {
@@ -82,12 +92,8 @@ Rules:
 
   const data = await response.json();
   const raw = data.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
-
-  try {
-    return JSON.parse(raw);
-  } catch (e) {
-    throw new Error('Could not parse credit report response. Raw: ' + raw.substring(0, 300));
-  }
+  try { return JSON.parse(raw); }
+  catch (e) { throw new Error('Could not parse credit report. Raw: ' + raw.substring(0, 300)); }
 }
 
 export async function parseRateSheet(file, adminMargins = {}) {
@@ -122,16 +128,12 @@ Rules:
 - adjustedRate = rate + admin margin for that program type
 - points is cost (positive = borrower pays), credits is lender credit (positive = lender pays)
 - Include at minimum 3 rate tiers per program: lowest rate, par (0 points/credits), highest credits
-- If rate sheet has FICO or LTV adjustments, include them
 - Only include 30-year fixed programs`
       }
     ];
   } else {
     const text = await file.text();
-    content = [{
-      type: 'text',
-      text: `Parse this rate sheet and return JSON with programs array. ${marginNote}\n\nFormat: {"programs":[{"type":"Conventional","term":30,"rates":[{"rate":6.5,"points":0,"credits":0,"adjustedRate":7.0}],"ficoCutoffs":[],"ltvAdjustments":[]}],"effectiveDate":""}\n\n${text.substring(0, 10000)}`
-    }];
+    content = [{ type: 'text', text: `Parse this rate sheet and return JSON. ${marginNote}\n\nFormat: {"programs":[{"type":"Conventional","term":30,"rates":[{"rate":6.5,"points":0,"credits":0,"adjustedRate":7.0}],"ficoCutoffs":[],"ltvAdjustments":[]}],"effectiveDate":""}\n\n${text.substring(0, 10000)}` }];
   }
 
   const apiKey2 = import.meta.env.VITE_ANTHROPIC_API_KEY;
@@ -143,21 +145,13 @@ Rules:
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true'
     },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
-      messages: [{ role: 'user', content }]
-    })
+    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2000, messages: [{ role: 'user', content }] })
   });
 
   if (!response.ok) throw new Error(`Rate sheet API error ${response.status}`);
 
   const data = await response.json();
   const raw = data.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
-
-  try {
-    return JSON.parse(raw);
-  } catch (e) {
-    throw new Error('Could not parse rate sheet. Raw: ' + raw.substring(0, 300));
-  }
+  try { return JSON.parse(raw); }
+  catch (e) { throw new Error('Could not parse rate sheet. Raw: ' + raw.substring(0, 300)); }
 }
