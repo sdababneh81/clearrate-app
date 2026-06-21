@@ -170,6 +170,7 @@ export default function App() {
       // Pass client profile so Claude can apply correct LLPAs
       const clientCtx = {
         ficoScore: profile.ficoScore || parsedCredit?.ficoScores?.transunion || 680,
+        currentRate: parseFloat(profile.currentRate) || null,
         ltv: profile.estimatedValue && profile.currentBalance
           ? Math.round((parseFloat(profile.currentBalance) / parseFloat(profile.estimatedValue)) * 100)
           : null,
