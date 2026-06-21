@@ -78,6 +78,11 @@ export function generateScenarios({
       //   - par rates (zero points/credits)
       const rates = (program.rates || []).map(r => ({
         ...r,
+        // Support both old format (points/credits) and new format (netPoints/credits)
+        points: r.netPoints !== undefined ? Math.max(0, r.netPoints) : Math.max(0, r.points || 0),
+        credits: r.netPoints !== undefined
+          ? Math.max(0, -(r.netPoints))  // negative netPoints = lender credit
+          : Math.max(0, r.credits || 0),
         adjustedRate: (r.adjustedRate || r.rate || 0) + marginPct,
       }));
       if (rates.length === 0) continue;
