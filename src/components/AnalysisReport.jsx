@@ -86,17 +86,43 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, c
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {visibleScenarios.map((sc, i) => (
+        {/* Always show Fixed and ARM sections separately */}
+        {(() => {
+          const fixedScenarios = visibleScenarios.filter(sc => !sc.isARM);
+          const armScenarios = visibleScenarios.filter(sc => sc.isARM);
+          const renderCard = (sc, i) => (
             <ScenarioCard
               key={i}
               scenario={sc}
-              isRecommended={sc === recommended || (sc.program === recommended?.program && sc.optionLabel === recommended?.optionLabel && sc.goal === recommended?.goal)}
-              isSelected={s === sc || (s.program === sc.program && s.optionLabel === sc.optionLabel && s.goal === sc.goal)}
+              isRecommended={sc === recommended || (sc.program === recommended?.program && sc.optionLabel === recommended?.optionLabel && sc.goal === recommended?.goal && sc.isARM === recommended?.isARM)}
+              isSelected={s === sc || (s.program === sc.program && s.optionLabel === sc.optionLabel && s.goal === sc.goal && s.isARM === sc.isARM)}
               onSelect={setActiveScenario}
             />
-          ))}
-        </div>
+          );
+          return (
+            <div className="space-y-4">
+              {fixedScenarios.length > 0 && (
+                <div>
+                  <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">📋 30-Year Fixed Options</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {fixedScenarios.map(renderCard)}
+                  </div>
+                </div>
+              )}
+              {armScenarios.length > 0 && (
+                <div>
+                  <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">📈 ARM Options — Lower initial rate, adjusts after fixed period</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {armScenarios.map(renderCard)}
+                  </div>
+                </div>
+              )}
+              {fixedScenarios.length === 0 && armScenarios.length === 0 && (
+                <div className="text-gray-400 text-sm">No beneficial scenarios found. Try adjusting margin or adding a rate sheet.</div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* THE REPORT — matches Priority 1 Lending layout */}
