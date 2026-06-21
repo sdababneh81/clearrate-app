@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=DM+Serif+Display&display=swap');
+
+:root {
+  --brand: #0f2d5e;
+  --brand-mid: #1d4ed8;
+  --brand-light: #dbeafe;
+  --accent: #0ea5e9;
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+}
+
+* { box-sizing: border-box; }
+body { font-family: 'Inter', sans-serif; background: #f8fafc; color: #0f172a; }
