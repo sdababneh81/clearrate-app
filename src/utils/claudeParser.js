@@ -102,44 +102,42 @@ Rules:
 export async function parseRateSheet(file, clientProfile, adminMargins = {}) {
   const { ficoScore, ltv, loanType, purpose, currentRate } = clientProfile || {};
 
-  let content;
   const borrowerContext = ficoScore
     ? `Borrower: FICO ${ficoScore}, LTV ~${ltv || 'unknown'}%, loan type: ${loanType || 'Conventional'}, purpose: ${purpose || 'rate/term refi'}${currentRate ? `, current rate: ${currentRate}%` : ''}.`
     : '';
 
-  const systemPrompt = `You are a mortgage rate sheet parser. You output ONLY valid JSON. You never explain, never use markdown, never add any text before or after the JSON object. Your entire response must be parseable by JSON.parse(). Start your response with { and end with }.`;
+  const userPrompt = `This is a wholesale lender rate sheet PDF. ${borrowerContext}
 
-  const userPrompt = file.type === 'application/pdf'
-    ? `This is a wholesale lender rate sheet PDF. ${borrowerContext}
+Extract ALL rate programs and ALL rate rows. Apply FICO and LTV LLPA adjustments from the adjustment tables.
 
-Output ONLY a JSON object. No explanation. No markdown. No steps. Start with { immediately.
+For each rate row, provide:
+- rate: the note rate (number, e.g. 6.5)
+- netPoints: base price from 30-day lock column PLUS all applicable LLPA adjustments. Negative = lender credit. Positive = borrower pays points.
 
-Required format:
-{"programs":[{"type":"VA","term":30,"isARM":false,"armType":null,"rates":[{"rate":6.5,"netPoints":-1.5},{"rate":6.75,"netPoints":-0.5},{"rate":7.0,"netPoints":0.25}]},{"type":"Conventional","term":30,"isARM":false,"armType":null,"rates":[{"rate":7.0,"netPoints":-0.5}]}],"effectiveDate":"18-Jun-26","llpasApplied":["FICO 680-699 +0.25","LTV 75-80 +0.25"]}
+Include every program: VA 30yr fixed, VA ARM, Conventional 30yr fixed, FHA 30yr fixed — whatever is present.
+type must be exactly "VA", "Conventional", or "FHA".
+Do NOT add broker margin. Raw lender pricing only.`;
 
-Rules:
-- type: must be "VA", "Conventional", or "FHA" only
-- rate: the note rate number (e.g. 6.5)
-- netPoints: base price from 30-day lock column PLUS FICO and LTV LLPA adjustments. Negative = lender credit. Positive = borrower pays points.
-- Include ALL rate rows from each program — do not skip any
-- Include every program visible: VA fixed, VA ARM, Conventional, FHA
-- Do NOT add broker margin — raw lender pricing only
-- llpasApplied: list each LLPA you applied with its value`
-    : `Parse this rate sheet. ${borrowerContext} Output ONLY JSON starting with {.\n\n{"programs":[{"type":"VA","term":30,"isARM":false,"armType":null,"rates":[{"rate":6.5,"netPoints":-1.5}]}],"effectiveDate":"","llpasApplied":[]}\n\nnetPoints = lender price + LLPA adjustments. No broker margin.\n\n${(await file.text()).substring(0, 15000)}`;
-
+  let userContent;
   if (file.type === 'application/pdf') {
     const base64 = await fileToBase64(file);
-    content = [
+    userContent = [
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
       { type: 'text', text: userPrompt }
     ];
   } else {
-    content = [{ type: 'text', text: userPrompt }];
+    const text = await file.text();
+    userContent = [{ type: 'text', text: userPrompt + '\n\n' + text.substring(0, 15000) }];
   }
 
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
 
-  console.log('[ClearRate] Sending rate sheet to Claude...', { borrowerContext });
+  // PREFILL TECHNIQUE: Pre-populate the assistant turn with the opening of the JSON.
+  // Claude is forced to CONTINUE the JSON rather than starting with explanation.
+  // This is the most reliable way to guarantee JSON output.
+  const prefill = '{"programs":[';
+
+  console.log('[ClearRate] Sending rate sheet to Claude (prefill mode)...', { borrowerContext });
 
   const response = await fetch(CLAUDE_API, {
     method: 'POST',
@@ -151,9 +149,12 @@ Rules:
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
-      max_tokens: 6000,
-      system: systemPrompt,
-      messages: [{ role: 'user', content }]
+      max_tokens: 8000,
+      system: 'You are a mortgage rate sheet data extractor. You complete JSON objects. You never add explanation or markdown.',
+      messages: [
+        { role: 'user', content: userContent },
+        { role: 'assistant', content: prefill }  // prefill forces Claude to continue the JSON
+      ]
     })
   });
 
@@ -164,49 +165,93 @@ Rules:
   }
 
   const data = await response.json();
-  const raw = data.content.map(b => b.text || '').join('').trim();
+  // Claude continues from the prefill — prepend it back to reconstruct full JSON
+  const continuation = data.content.map(b => b.text || '').join('').trim();
+  const raw = prefill + continuation;
 
-  console.log('[ClearRate] Raw Claude response length:', raw.length);
-  console.log('[ClearRate] First 500 chars:', raw.substring(0, 500));
+  console.log('[ClearRate] Raw (prefill + continuation) length:', raw.length);
+  console.log('[ClearRate] First 600 chars:', raw.substring(0, 600));
 
-  // Strip any accidental markdown fences
-  const cleaned = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+  // Strip trailing markdown fence if Claude added one at the end
+  const cleaned = raw.replace(/\s*```\s*$/, '').trim();
 
   let parsed;
   try {
     parsed = JSON.parse(cleaned);
   } catch (e) {
-    // Try to extract JSON object from response
-    const match = cleaned.match(/(\{[\s\S]*"programs"[\s\S]*\})/);
-    if (match) {
-      try {
-        parsed = JSON.parse(match[1]);
-        console.warn('[ClearRate] Had to extract JSON from response — system prompt not respected');
-      } catch(e2) {
-        console.error('[ClearRate] JSON parse failed. Full raw response:', raw);
-        throw new Error('Rate sheet parse failed. Claude returned non-JSON. See console for raw output.');
-      }
+    // JSON incomplete? Try to close it gracefully
+    // Common case: Claude hit max_tokens mid-object — try to patch the tail
+    const patched = tryPatchIncompleteJSON(cleaned);
+    if (patched) {
+      parsed = patched;
+      console.warn('[ClearRate] JSON was incomplete — patched tail successfully');
     } else {
-      console.error('[ClearRate] No JSON object found. Full raw response:', raw);
-      throw new Error('Rate sheet parse failed — no JSON in response. See browser console for details.');
+      console.error('[ClearRate] JSON parse failed. Full raw:', raw);
+      throw new Error(`Rate sheet JSON parse failed. Got ${raw.length} chars. First 300: ${raw.substring(0, 300)}`);
     }
   }
 
-  // Normalize: adjustedRate = rate (engine applies user's margin, not parser)
-  if (parsed.programs) {
-    parsed.programs = parsed.programs.map(prog => ({
-      ...prog,
-      rates: (prog.rates || []).map(r => ({
-        ...r,
-        adjustedRate: r.rate,
-      }))
-    }));
+  // Validate structure
+  if (!parsed.programs || !Array.isArray(parsed.programs)) {
+    console.error('[ClearRate] No programs array in parsed output:', parsed);
+    throw new Error('Rate sheet parsed but missing programs array.');
   }
 
+  // Normalize: adjustedRate = rate (engine applies margin)
+  parsed.programs = parsed.programs.map(prog => ({
+    ...prog,
+    rates: (prog.rates || []).map(r => ({
+      ...r,
+      adjustedRate: parseFloat(r.rate) || 0,
+    })).filter(r => r.adjustedRate > 0)
+  })).filter(p => p.rates && p.rates.length > 0);
+
   console.log('[ClearRate] ✅ Rate sheet parsed successfully');
-  console.log('[ClearRate] Programs:', parsed.programs?.length || 0,
-    parsed.programs?.map(p => `${p.type} ${p.isARM ? p.armType || 'ARM' : '30yr fixed'} (${p.rates?.length || 0} rates)`).join(' | '));
-  console.log('[ClearRate] Full parsed output:', JSON.stringify(parsed, null, 2));
+  console.log('[ClearRate] Programs:', parsed.programs.length,
+    parsed.programs.map(p => `${p.type} ${p.isARM ? (p.armType || 'ARM') : '30yr fixed'} (${p.rates.length} rates)`).join(' | '));
+  console.log('[ClearRate] Full output:', JSON.stringify(parsed, null, 2));
 
   return parsed;
+}
+
+/**
+ * Attempt to patch a truncated JSON string by closing any open structures.
+ * Handles the case where Claude hit max_tokens mid-object.
+ */
+function tryPatchIncompleteJSON(str) {
+  // Count open braces/brackets to determine what needs closing
+  let braces = 0, brackets = 0;
+  let inString = false, escape = false;
+
+  for (const ch of str) {
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') braces++;
+    if (ch === '}') braces--;
+    if (ch === '[') brackets++;
+    if (ch === ']') brackets--;
+  }
+
+  if (braces < 0 || brackets < 0) return null; // malformed, can't patch
+
+  // Trim to last complete top-level object boundary we can find
+  // Find last complete rate object by finding last '}' before unclosed structures
+  let patched = str.trimEnd();
+
+  // Remove trailing incomplete object (find last complete },  or }, pattern)
+  // Strip trailing comma and partial object
+  patched = patched.replace(/,\s*\{[^}]*$/, '');
+  patched = patched.replace(/,\s*$/, '');
+
+  // Close open structures
+  for (let i = 0; i < brackets; i++) patched += ']';
+  for (let i = 0; i < braces; i++) patched += '}';
+
+  try {
+    return JSON.parse(patched);
+  } catch {
+    return null;
+  }
 }
