@@ -156,7 +156,7 @@ function LoanSummaryBar({ scenario: s, clientProfile }) {
   );
 }
 
-export default function AnalysisReport({ result, clientProfile, selectedDebts, marginBPS, companyName = 'Priority 1 Lending' }) {
+export default function AnalysisReport({ result, clientProfile, selectedDebts, marginBPS, marginDollar, companyName = 'Priority 1 Lending' }) {
   const [activeScenario, setActiveScenario] = useState(result.recommended);
   const [activeGoalTab, setActiveGoalTab] = useState('rate_term');
   const [productTab, setProductTab] = useState('fixed'); // 'fixed' | 'arm'
@@ -307,34 +307,26 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
           <div className="bg-gray-50 px-4 py-2 text-xs font-bold uppercase tracking-wider text-gray-500">New Loan Balance Breakdown</div>
           <div className="px-4 py-3 space-y-2 text-sm">
             {[
-              ['Current Mortgage Balance', s.currentBalance || clientProfile.currentBalance],
-              ['Debts Being Paid Off', s.debtBalanceTotal],
-              ['Title & Settlement Charges', s.titleCharges],
-              ...(s.cashOut > 0 ? [['Cash-Out Amount', s.cashOut]] : []),
-            ].map(([label, val], i, arr) => (
-              <div key={i} className={`flex justify-between py-1.5 ${i < arr.length - 1 ? 'border-b border-gray-100' : ''}`}>
-                <span className="text-gray-600">{label}</span>
-                <span className="font-semibold">{money(val)}</span>
+              ['Current Mortgage Balance', s.currentBalance || clientProfile.currentBalance, null],
+              ['Debts Being Paid Off', s.debtBalanceTotal, null],
+              ['Title & Settlement Charges', s.titleCharges, null],
+              ...(s.cashOut > 0 ? [['Cash-Out Amount', s.cashOut, null]] : []),
+              ...(s.borrowerPaysPct > 0 ? [[`Discount Points (${s.borrowerPaysPct?.toFixed(3)}%)`, s.pointsCost, 'amber']] : []),
+              ...(s.lenderCreditPct > 0 ? [[`Lender Credit (${s.lenderCreditPct?.toFixed(3)}%)`, -s.lenderCredit, 'green']] : []),
+            ].map(([label, val, color], i, arr) => (
+              <div key={i} className={`flex justify-between py-1.5 border-b border-gray-100`}>
+                <span className={color === 'amber' ? 'text-amber-700 font-medium' : color === 'green' ? 'text-green-700 font-medium' : 'text-gray-600'}>{label}</span>
+                <span className={`font-semibold ${color === 'amber' ? 'text-amber-700' : color === 'green' ? 'text-green-700' : ''}`}>
+                  {color === 'green' ? '-' : color === 'amber' ? '+' : ''}{money(Math.abs(val))}
+                </span>
               </div>
             ))}
             <div className="flex justify-between pt-2 border-t-2 border-gray-300">
               <span className="font-bold text-gray-900">New Loan Total</span>
               <span className="font-bold text-blue-700 text-base">{money(s.newLoanAmount)}</span>
             </div>
-            {/* Closing costs breakdown */}
-            <div className="mt-3 pt-3 border-t border-gray-100 space-y-1 text-xs">
-              {s.borrowerPaysPct > 0 && (
-                <div className="flex justify-between text-amber-700">
-                  <span>Borrower pays points ({s.borrowerPaysPct?.toFixed(3)}%)</span>
-                  <span>+{money(s.pointsCost)}</span>
-                </div>
-              )}
-              {s.lenderCreditPct > 0 && (
-                <div className="flex justify-between text-green-700">
-                  <span>Lender credit ({s.lenderCreditPct?.toFixed(3)}%)</span>
-                  <span>-{money(s.lenderCredit)}</span>
-                </div>
-              )}
+            {/* Closing costs summary */}
+            <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5 text-xs">
               <div className="flex justify-between font-semibold text-sm">
                 <span>Net Closing Costs</span>
                 <span>{money(s.netClosingCosts)}</span>
@@ -345,15 +337,55 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                   {s.breakevenMonths === 0 ? 'Immediate' : `${s.breakevenMonths} months`}
                 </span>
               </div>
-              {marginBPS > 0 && (
-                <div className="flex justify-between text-blue-700">
-                  <span>Broker margin ({marginBPS} BPS)</span>
-                  <span>earned as YSP</span>
-                </div>
-              )}
             </div>
           </div>
         </div>
+
+        {/* LO-only: Compensation / YSP box — not shown to client */}
+        {marginBPS > 0 && (() => {
+          const lenderNetPoints = s.netPointsPct ?? 0; // net after margin (what borrower sees)
+          const brokerMarginPct = (parseFloat(marginBPS) || 0) / 100;
+          const baseNetPoints = lenderNetPoints - brokerMarginPct; // what lender is actually paying
+          const lenderCreditToLO = baseNetPoints < 0 ? Math.abs(baseNetPoints) : 0;
+          const loEarned = Math.round((brokerMarginPct / 100) * s.newLoanAmount);
+          const loEarnedDisplay = marginDollar ? money(parseFloat(marginDollar)) : money(loEarned);
+          return (
+            <div className="border-b border-blue-200 bg-blue-50">
+              <div className="bg-blue-100 px-4 py-2 text-xs font-bold uppercase tracking-wider text-blue-700 flex items-center gap-2">
+                <span>🔒</span> LO Compensation Summary — Internal Only
+              </div>
+              <div className="px-4 py-3 space-y-2 text-sm">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-white rounded-lg p-3 border border-blue-100">
+                    <div className="text-xs text-blue-500 font-medium mb-1">Rate Locked</div>
+                    <div className="font-bold text-gray-900 text-lg">{pct(s.rate)}</div>
+                    <div className="text-xs text-gray-500">{s.isARM ? (s.armType || 'ARM') : '30-Year Fixed'}</div>
+                  </div>
+                  <div className="bg-white rounded-lg p-3 border border-blue-100">
+                    <div className="text-xs text-blue-500 font-medium mb-1">Broker Margin</div>
+                    <div className="font-bold text-gray-900 text-lg">{marginBPS} BPS</div>
+                    <div className="text-xs text-gray-500">{(brokerMarginPct).toFixed(3)}% of loan</div>
+                  </div>
+                  <div className="bg-white rounded-lg p-3 border border-blue-100">
+                    <div className="text-xs text-blue-500 font-medium mb-1">YSP Earned</div>
+                    <div className="font-bold text-green-700 text-lg">{loEarnedDisplay}</div>
+                    <div className="text-xs text-gray-500">earned as yield spread</div>
+                  </div>
+                  <div className="bg-white rounded-lg p-3 border border-blue-100">
+                    <div className="text-xs text-blue-500 font-medium mb-1">Lender Base Price</div>
+                    <div className={`font-bold text-lg ${baseNetPoints <= 0 ? 'text-green-700' : 'text-amber-700'}`}>
+                      {baseNetPoints <= 0 ? `${Math.abs(baseNetPoints).toFixed(3)}% credit` : `${baseNetPoints.toFixed(3)}% cost`}
+                    </div>
+                    <div className="text-xs text-gray-500">before your margin</div>
+                  </div>
+                </div>
+                <div className="bg-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700 font-medium">
+                  Rate {pct(s.rate)} pays lender credit of {baseNetPoints <= 0 ? `${Math.abs(baseNetPoints).toFixed(3)}%` : '0%'} → your {marginBPS} BPS margin consumes {brokerMarginPct.toFixed(3)}% → borrower {s.lenderCreditPct > 0 ? `receives ${s.lenderCreditPct?.toFixed(3)}% credit (${money(s.lenderCredit)})` : s.borrowerPaysPct > 0 ? `pays ${s.borrowerPaysPct?.toFixed(3)}% in points (${money(s.pointsCost)})` : 'at par'}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Debts paid off */}
         <div className="border-b border-gray-200">
@@ -399,4 +431,5 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
     </div>
   );
 }
+
 
