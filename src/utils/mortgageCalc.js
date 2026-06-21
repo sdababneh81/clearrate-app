@@ -35,29 +35,52 @@ export function calcBreakeven(netCost, monthlySavings) {
   return Math.ceil(netCost / monthlySavings);
 }
 
-// Score a rate option — balances monthly savings vs recoupment vs upfront cost
-// Higher score = better recommendation
+// Score a rate option — RECOUPMENT is the primary factor
+// The question: "How many months until the borrower breaks even on their closing costs?"
+// Lower recoupment = better. Monthly savings are secondary.
 export function scoreRateOption(scenario) {
-  const { monthlySavings, breakevenMonths, netClosingCosts, borrowerPaysPct, isARM, rate } = scenario;
+  const { monthlySavings, breakevenMonths, netClosingCosts, newLoanAmount } = scenario;
   if (monthlySavings <= 0) return -9999;
 
-  // Penalize long recoupment — target < 24 months is ideal
-  const recoupmentPenalty = breakevenMonths > 48 ? -500 :
-    breakevenMonths > 36 ? -200 :
-    breakevenMonths > 24 ? -50 : 0;
+  // PRIMARY: Recoupment period — this is the main ranking factor
+  // Ideal: under 18 months. Acceptable: under 36. Poor: over 48.
+  let recoupmentScore;
+  if (breakevenMonths === 0) {
+    recoupmentScore = 1000; // no cost = best possible
+  } else if (breakevenMonths <= 12) {
+    recoupmentScore = 900;
+  } else if (breakevenMonths <= 18) {
+    recoupmentScore = 750;
+  } else if (breakevenMonths <= 24) {
+    recoupmentScore = 500;
+  } else if (breakevenMonths <= 36) {
+    recoupmentScore = 200;
+  } else if (breakevenMonths <= 48) {
+    recoupmentScore = 50;
+  } else {
+    recoupmentScore = -500; // over 4 years to break even = bad deal
+  }
 
-  // Reward monthly savings
-  const savingsScore = monthlySavings * 5;
+  // SECONDARY: Monthly savings (tiebreaker when recoupment is similar)
+  const savingsScore = monthlySavings * 0.5;
 
-  // Penalize points cost — borrower paying points reduces the value
-  const pointsPenalty = (borrowerPaysPct || 0) > 0 ? -(borrowerPaysPct * 300) : 0;
+  return recoupmentScore + savingsScore;
+}
 
-  // Reward low closing costs
-  const costScore = Math.max(0, 200 - (netClosingCosts || 0) / 100);
+// Compare two scenarios — returns the better one based on recoupment
+// Used to decide between ARM vs Fixed, or between rate options
+export function betterScenario(a, b) {
+  if (!a) return b;
+  if (!b) return a;
 
-  // ARM penalty: ARM should only beat fixed if rate is meaningfully lower
-  // If ARM rate >= fixed rate at same or higher cost, penalize heavily
-  const armPenalty = isARM ? -100 : 0; // baseline ARM penalty to prefer fixed when equal
+  const aBreak = a.breakevenMonths || 0;
+  const bBreak = b.breakevenMonths || 0;
 
-  return savingsScore + costScore + recoupmentPenalty + pointsPenalty + armPenalty;
+  // If recoupment is within 3 months of each other, prefer higher monthly savings
+  if (Math.abs(aBreak - bBreak) <= 3) {
+    return a.monthlySavings >= b.monthlySavings ? a : b;
+  }
+
+  // Otherwise pick lower recoupment
+  return aBreak <= bBreak ? a : b;
 }
