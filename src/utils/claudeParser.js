@@ -1,6 +1,5 @@
 /**
  * ClearRate — Claude API PDF Parser
- * Sends PDF as base64 to Claude and extracts structured data
  */
 
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
@@ -28,50 +27,26 @@ export async function parseCreditReport(file) {
 Return this exact structure:
 {
   "borrowerName": "string",
-  "address": "string - CURRENT ADDRESS from credit report, formatted as: street, city, state zip. Example: 7729 NW 21ST ST, MARGATE, FL 33063",
+  "address": "string - CURRENT ADDRESS from credit report, formatted as: street, city, state zip.",
   "ficoScores": { "transunion": number|null, "equifax": number|null, "experian": number|null },
   "mortgage": {
-    "lender": "string",
-    "balance": number,
-    "originalAmount": number|null,
-    "payment": number|null,
-    "rate": number|null,
-    "opened": "string",
-    "monthsRemaining": number|null,
-    "originalTermMonths": number|null
+    "lender": "string", "balance": number, "originalAmount": number|null,
+    "payment": number|null, "rate": number|null, "opened": "string",
+    "monthsRemaining": number|null, "originalTermMonths": number|null
   },
   "tradelines": [
-    {
-      "name": "string",
-      "balance": number,
-      "payment": number,
+    { "name": "string", "balance": number, "payment": number,
       "type": "Revolving|Auto|Student Loan|Installment|Other",
-      "limit": number|null,
-      "rate": number|null,
-      "status": "open|closed|inactive",
-      "monthsRemaining": number|null
-    }
+      "limit": number|null, "rate": number|null, "status": "open|closed|inactive", "monthsRemaining": number|null }
   ]
 }
 
-Rules:
-- Only include open tradelines with balance > 0 and payment > 0
-- Skip the mortgage (put it in the mortgage field)
-- Skip closed/inactive accounts
-- Deduplicate accounts that appear on multiple bureaus — keep one
-- For FICO scores use the middle score or the lower of two if only two bureaus
-- For mortgage: originalAmount is the original loan amount, monthsRemaining is how many months are left, originalTermMonths is the original term (usually 360 for 30yr)
-- Payment is the minimum monthly payment
-- type must be exactly one of: Revolving, Auto, Student Loan, Installment, Other
-- address: use the CURRENT ADDRESS listed on the report`
+Rules: only open tradelines balance>0 payment>0, skip mortgage (put in mortgage field), deduplicate cross-bureau, middle FICO score.`
       }
     ];
   } else {
     const text = await file.text();
-    content = [{
-      type: 'text',
-      text: `Extract all tradelines from this mortgage credit report text. Return ONLY valid JSON, no markdown.\n\nReturn: {"borrowerName":"string","address":"street, city, state zip","ficoScores":{"transunion":null,"equifax":null,"experian":null},"mortgage":{"lender":"string","balance":0,"originalAmount":null,"payment":null,"rate":null,"opened":"","monthsRemaining":null,"originalTermMonths":null},"tradelines":[{"name":"string","balance":0,"payment":0,"type":"Revolving","limit":null,"rate":null,"status":"open","monthsRemaining":null}]}\n\nOnly open accounts with balance > 0. Skip mortgage (put in mortgage field). Deduplicate cross-bureau.\n\n${text.substring(0, 15000)}`
-    }];
+    content = [{ type: 'text', text: `Extract tradelines from this credit report. Return ONLY valid JSON:\n{"borrowerName":"","address":"","ficoScores":{"transunion":null,"equifax":null,"experian":null},"mortgage":{"lender":"","balance":0,"originalAmount":null,"payment":null,"rate":null,"opened":"","monthsRemaining":null,"originalTermMonths":null},"tradelines":[{"name":"","balance":0,"payment":0,"type":"Revolving","limit":null,"rate":null,"status":"open","monthsRemaining":null}]}\n\nOnly open accounts balance>0. Skip mortgage. Deduplicate.\n\n${text.substring(0, 15000)}` }];
   }
 
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
@@ -79,20 +54,11 @@ Rules:
 
   const response = await fetch(CLAUDE_API, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
     body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2000, messages: [{ role: 'user', content }] })
   });
 
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`API error ${response.status}: ${err.substring(0, 200)}`);
-  }
-
+  if (!response.ok) throw new Error(`API error ${response.status}: ${(await response.text()).substring(0, 200)}`);
   const data = await response.json();
   const raw = data.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
   try { return JSON.parse(raw); }
@@ -103,155 +69,159 @@ export async function parseRateSheet(file, clientProfile, adminMargins = {}) {
   const { ficoScore, ltv, loanType, purpose, currentRate } = clientProfile || {};
 
   const borrowerContext = ficoScore
-    ? `Borrower: FICO ${ficoScore}, LTV ~${ltv || 'unknown'}%, loan type: ${loanType || 'Conventional'}, purpose: ${purpose || 'rate/term refi'}${currentRate ? `, current rate: ${currentRate}%` : ''}.`
+    ? `Borrower profile: FICO ${ficoScore}, LTV ${ltv || 'unknown'}%, loan type ${loanType || 'Conventional'}, purpose ${purpose || 'rate/term refi'}${currentRate ? `, current rate ${currentRate}%` : ''}.`
     : '';
 
-  const userPrompt = `This is a wholesale lender rate sheet PDF. ${borrowerContext}
+  // Two-call strategy:
+  // Call 1: Extract raw rate data as a simple text table (Claude won't narrate this)
+  // Call 2: Convert that text to JSON (small, structured, can't fail)
+  // This sidesteps the "thinking out loud" problem entirely.
 
-Extract ALL rate programs and ALL rate rows. Apply FICO and LTV LLPA adjustments from the adjustment tables.
-
-For each rate row, provide:
-- rate: the note rate (number, e.g. 6.5)
-- netPoints: base price from 30-day lock column PLUS all applicable LLPA adjustments. Negative = lender credit. Positive = borrower pays points.
-
-Include every program: VA 30yr fixed, VA ARM, Conventional 30yr fixed, FHA 30yr fixed — whatever is present.
-type must be exactly "VA", "Conventional", or "FHA".
-Do NOT add broker margin. Raw lender pricing only.`;
-
-  let userContent;
+  let rawTableContent;
   if (file.type === 'application/pdf') {
     const base64 = await fileToBase64(file);
-    userContent = [
+    rawTableContent = [
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
-      { type: 'text', text: userPrompt }
+      {
+        type: 'text',
+        text: `${borrowerContext}
+
+From this rate sheet, extract a pipe-delimited table of ALL rate rows.
+Apply FICO and LTV LLPA adjustments from the pricing adjustment tables.
+
+Output ONLY this table, no other text:
+
+PROGRAM|ARM|ARM_TYPE|RATE|NET_POINTS
+Conventional|false||6.500|-0.250
+Conventional|false||6.750|0.125
+VA|false||6.250|-1.500
+VA|true|5/6 SOFR|5.875|-0.750
+
+Rules:
+- PROGRAM: VA, Conventional, or FHA only
+- NET_POINTS: 30-day lock base price PLUS FICO and LTV adjustments. Negative=credit, Positive=borrower pays.
+- Include ALL rate rows for each program
+- First line must be the header exactly as shown above`
+      }
     ];
   } else {
     const text = await file.text();
-    userContent = [{ type: 'text', text: userPrompt + '\n\n' + text.substring(0, 15000) }];
+    rawTableContent = [{ type: 'text', text: `${borrowerContext}\n\nExtract rate table from this rate sheet as pipe-delimited with header PROGRAM|ARM|ARM_TYPE|RATE|NET_POINTS. Apply LLPAs. One row per rate.\n\n${text.substring(0, 15000)}` }];
   }
 
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  console.log('[ClearRate] Step 1: Extracting rate table...', { borrowerContext });
 
-  // PREFILL TECHNIQUE: Pre-populate the assistant turn with the opening of the JSON.
-  // Claude is forced to CONTINUE the JSON rather than starting with explanation.
-  // This is the most reliable way to guarantee JSON output.
-  const prefill = '{"programs":[';
-
-  console.log('[ClearRate] Sending rate sheet to Claude (prefill mode)...', { borrowerContext });
-
-  const response = await fetch(CLAUDE_API, {
+  const r1 = await fetch(CLAUDE_API, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8000,
-      system: 'You are a mortgage rate sheet data extractor. You complete JSON objects. You never add explanation or markdown.',
-      messages: [
-        { role: 'user', content: userContent },
-        { role: 'assistant', content: prefill }  // prefill forces Claude to continue the JSON
-      ]
-    })
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4000, messages: [{ role: 'user', content: rawTableContent }] })
   });
 
-  if (!response.ok) {
-    const errText = await response.text();
-    console.error('[ClearRate] Rate sheet API error:', response.status, errText);
-    throw new Error(`Rate sheet API error ${response.status}: ${errText.substring(0, 200)}`);
+  if (!r1.ok) throw new Error(`Rate sheet API error ${r1.status}: ${(await r1.text()).substring(0, 200)}`);
+
+  const d1 = await r1.json();
+  const tableText = d1.content.map(b => b.text || '').join('').trim();
+  console.log('[ClearRate] Step 1 table output:', tableText.substring(0, 800));
+
+  // Parse the pipe-delimited table into a programs structure
+  const parsed = parseTableToPrograms(tableText);
+
+  if (!parsed.programs || parsed.programs.length === 0) {
+    console.error('[ClearRate] No programs parsed from table. Raw table:', tableText);
+    throw new Error('No rate programs found in rate sheet. Raw: ' + tableText.substring(0, 300));
   }
 
-  const data = await response.json();
-  // Claude continues from the prefill — prepend it back to reconstruct full JSON
-  const continuation = data.content.map(b => b.text || '').join('').trim();
-  const raw = prefill + continuation;
-
-  console.log('[ClearRate] Raw (prefill + continuation) length:', raw.length);
-  console.log('[ClearRate] First 600 chars:', raw.substring(0, 600));
-
-  // Strip trailing markdown fence if Claude added one at the end
-  const cleaned = raw.replace(/\s*```\s*$/, '').trim();
-
-  let parsed;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch (e) {
-    // JSON incomplete? Try to close it gracefully
-    // Common case: Claude hit max_tokens mid-object — try to patch the tail
-    const patched = tryPatchIncompleteJSON(cleaned);
-    if (patched) {
-      parsed = patched;
-      console.warn('[ClearRate] JSON was incomplete — patched tail successfully');
-    } else {
-      console.error('[ClearRate] JSON parse failed. Full raw:', raw);
-      throw new Error(`Rate sheet JSON parse failed. Got ${raw.length} chars. First 300: ${raw.substring(0, 300)}`);
-    }
-  }
-
-  // Validate structure
-  if (!parsed.programs || !Array.isArray(parsed.programs)) {
-    console.error('[ClearRate] No programs array in parsed output:', parsed);
-    throw new Error('Rate sheet parsed but missing programs array.');
-  }
-
-  // Normalize: adjustedRate = rate (engine applies margin)
-  parsed.programs = parsed.programs.map(prog => ({
-    ...prog,
-    rates: (prog.rates || []).map(r => ({
-      ...r,
-      adjustedRate: parseFloat(r.rate) || 0,
-    })).filter(r => r.adjustedRate > 0)
-  })).filter(p => p.rates && p.rates.length > 0);
-
-  console.log('[ClearRate] ✅ Rate sheet parsed successfully');
-  console.log('[ClearRate] Programs:', parsed.programs.length,
-    parsed.programs.map(p => `${p.type} ${p.isARM ? (p.armType || 'ARM') : '30yr fixed'} (${p.rates.length} rates)`).join(' | '));
+  console.log('[ClearRate] ✅ Rate sheet parsed:',
+    parsed.programs.map(p => `${p.type} ${p.isARM ? (p.armType || 'ARM') : 'fixed'} (${p.rates.length} rates)`).join(' | '));
   console.log('[ClearRate] Full output:', JSON.stringify(parsed, null, 2));
 
   return parsed;
 }
 
 /**
- * Attempt to patch a truncated JSON string by closing any open structures.
- * Handles the case where Claude hit max_tokens mid-object.
+ * Parse pipe-delimited table output into programs structure.
+ * Handles Claude adding explanation before/after the table.
  */
-function tryPatchIncompleteJSON(str) {
-  // Count open braces/brackets to determine what needs closing
-  let braces = 0, brackets = 0;
-  let inString = false, escape = false;
+function parseTableToPrograms(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
-  for (const ch of str) {
-    if (escape) { escape = false; continue; }
-    if (ch === '\\' && inString) { escape = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
-    if (inString) continue;
-    if (ch === '{') braces++;
-    if (ch === '}') braces--;
-    if (ch === '[') brackets++;
-    if (ch === ']') brackets--;
+  // Find the header line
+  const headerIdx = lines.findIndex(l =>
+    l.toUpperCase().includes('PROGRAM') && l.includes('|') && l.toUpperCase().includes('RATE')
+  );
+
+  if (headerIdx === -1) {
+    // Fallback: try to parse any line with pipe-delimited numbers
+    return parseFallback(text);
   }
 
-  if (braces < 0 || brackets < 0) return null; // malformed, can't patch
+  const dataLines = lines.slice(headerIdx + 1).filter(l => l.includes('|') && !l.match(/^[-|]+$/));
 
-  // Trim to last complete top-level object boundary we can find
-  // Find last complete rate object by finding last '}' before unclosed structures
-  let patched = str.trimEnd();
+  const programMap = {};
 
-  // Remove trailing incomplete object (find last complete },  or }, pattern)
-  // Strip trailing comma and partial object
-  patched = patched.replace(/,\s*\{[^}]*$/, '');
-  patched = patched.replace(/,\s*$/, '');
+  for (const line of dataLines) {
+    const parts = line.split('|').map(s => s.trim());
+    if (parts.length < 4) continue;
 
-  // Close open structures
-  for (let i = 0; i < brackets; i++) patched += ']';
-  for (let i = 0; i < braces; i++) patched += '}';
+    const [programRaw, armRaw, armType, rateRaw, netPointsRaw] = parts;
 
-  try {
-    return JSON.parse(patched);
-  } catch {
-    return null;
+    // Normalize program type
+    let type = programRaw.trim();
+    if (/va/i.test(type)) type = 'VA';
+    else if (/fha/i.test(type)) type = 'FHA';
+    else if (/conv/i.test(type)) type = 'Conventional';
+    else continue; // skip unknown programs
+
+    const isARM = armRaw?.toLowerCase() === 'true';
+    const rate = parseFloat(rateRaw);
+    const netPoints = parseFloat(netPointsRaw);
+
+    if (!rate || isNaN(rate) || isNaN(netPoints)) continue;
+
+    const key = `${type}|${isARM}|${armType || ''}`;
+    if (!programMap[key]) {
+      programMap[key] = { type, term: 30, isARM, armType: armType || null, rates: [] };
+    }
+    programMap[key].rates.push({ rate, netPoints, adjustedRate: rate });
   }
+
+  const programs = Object.values(programMap).filter(p => p.rates.length > 0);
+  return { programs, effectiveDate: '', llpasApplied: [] };
+}
+
+/**
+ * Fallback parser: extract any rate-like data from free-form text.
+ */
+function parseFallback(text) {
+  const programs = [];
+  const seen = new Set();
+
+  // Look for patterns like "6.500  -1.250" or "6.500 | -1.250" or "6.500: -1.25 points"
+  const ratePattern = /\b(\d\.\d{3,4})\s*[|:]?\s*(-?\d+\.?\d*)\s*(?:pts?|points?|credit)?/gi;
+  const matches = [...text.matchAll(ratePattern)];
+
+  if (matches.length === 0) return { programs: [], effectiveDate: '', llpasApplied: [] };
+
+  // Determine dominant program type from text
+  const isVA = /\bva\b/i.test(text);
+  const isFHA = /\bfha\b/i.test(text);
+  const type = isVA ? 'VA' : isFHA ? 'FHA' : 'Conventional';
+
+  const rates = [];
+  for (const m of matches) {
+    const rate = parseFloat(m[1]);
+    const netPoints = parseFloat(m[2]);
+    if (rate < 3 || rate > 12 || isNaN(netPoints)) continue;
+    const key = rate.toFixed(3);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rates.push({ rate, netPoints, adjustedRate: rate });
+  }
+
+  if (rates.length > 0) {
+    programs.push({ type, term: 30, isARM: false, armType: null, rates });
+  }
+
+  return { programs, effectiveDate: '', llpasApplied: ['fallback-parser'] };
 }
