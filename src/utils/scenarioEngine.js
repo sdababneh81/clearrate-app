@@ -69,9 +69,12 @@ export function generateScenarios({
       return true;
     });
 
-    const programsToRun = filteredPrograms.length > 0 ? filteredPrograms : selectedPrograms.map(type => ({
+    // Use rate sheet programs if available, otherwise fall back to manual rate
+    const hasValidPrograms = filteredPrograms.some(p => p.rates && p.rates.length > 0);
+    const programsToRun = hasValidPrograms ? filteredPrograms : selectedPrograms.map(type => ({
       type,
       term: 30,
+      isARM: false,
       rates: clientProfile.manualRate ? [{
         rate: parseFloat(clientProfile.manualRate),
         netPoints: 0,
@@ -80,39 +83,46 @@ export function generateScenarios({
       isFallback: true,
     }));
 
+    if (programsToRun.every(p => !p.rates || p.rates.length === 0)) continue;
+
     for (const program of programsToRun) {
       const rawRates = program.rates || [];
       if (rawRates.length === 0) continue;
 
       // Normalize rate objects — handle both old and new format
       const normalizedRates = rawRates.map(r => {
+        // Ensure we always have a valid rate number
+        const baseRate = parseFloat(r.rate) || 0;
+        if (!baseRate) return null;
+
         // netPoints: negative = lender credit, positive = borrower pays
         let netPoints;
         if (r.netPoints !== undefined) {
-          netPoints = r.netPoints;
+          netPoints = parseFloat(r.netPoints) || 0;
+        } else if (r.basePoints !== undefined) {
+          netPoints = parseFloat(r.basePoints) || 0;
         } else {
-          // Old format: points (borrower pays) and credits (lender pays) are separate positive numbers
-          netPoints = (r.points || 0) - (r.credits || 0);
+          // Old format: separate points and credits fields
+          netPoints = (parseFloat(r.points) || 0) - (parseFloat(r.credits) || 0);
         }
 
-        // Apply broker margin: margin reduces the lender's payment to us
-        // This means we take it from the credit side
-        // netPointsAfterMargin = netPoints + marginPct
-        // (if lender was paying us -1.0%, and we want 2%, borrower now pays +1.0%)
+        // Apply broker margin: reduces lender credit, NOT added to note rate
         const netPointsAfterMargin = netPoints + marginPct;
 
+        // adjustedRate = note rate (broker margin does NOT change the rate)
+        const adjustedRate = parseFloat(r.adjustedRate) || baseRate;
+
         return {
-          rate: r.rate,
-          adjustedRate: r.adjustedRate || r.rate, // rate stays the same — margin doesn't change note rate
+          rate: baseRate,
+          adjustedRate,
           netPoints,
           netPointsAfterMargin,
-          // For display:
-          borrowerPays: Math.max(0, netPointsAfterMargin),  // positive = borrower pays points
-          lenderCredit: Math.max(0, -netPointsAfterMargin), // negative = lender credit to borrower
+          borrowerPays: Math.max(0, netPointsAfterMargin),
+          lenderCredit: Math.max(0, -netPointsAfterMargin),
           isARM: program.isARM || false,
           armType: program.armType || null,
         };
-      });
+      }).filter(r => r !== null && r.rate > 0);
 
       // Filter: only show rates that save money vs current rate
       // For very low current rates (< 4%), show best available anyway
