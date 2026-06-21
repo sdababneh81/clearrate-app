@@ -46,17 +46,26 @@ function ScenarioCard({ scenario: sc, isRecommended, isSelected, onSelect }) {
         </div>
       </div>
 
-      {/* Payment & Savings */}
-      <div className="grid grid-cols-2 gap-2 mb-3">
-        <div className="bg-white rounded-lg p-2 text-center border border-gray-100">
-          <div className="text-xs text-gray-500">New payment</div>
-          <div className="font-bold text-blue-700 text-sm">{money(sc.newPI)}/mo</div>
+      {/* Payment Breakdown */}
+      <div className="grid grid-cols-3 gap-1.5 mb-2">
+        <div className="bg-white rounded-lg p-1.5 text-center border border-gray-100">
+          <div className="text-xs text-gray-400">P&I</div>
+          <div className="font-bold text-blue-700 text-xs">{money(sc.newPI)}</div>
         </div>
-        <div className={`rounded-lg p-2 text-center border ${sc.monthlySavings > 0 ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
-          <div className="text-xs text-gray-500">Monthly savings</div>
-          <div className={`font-bold text-sm ${sc.monthlySavings > 0 ? 'text-green-700' : 'text-red-700'}`}>
-            {sc.monthlySavings > 0 ? '+' : ''}{money(sc.monthlySavings)}/mo
-          </div>
+        <div className="bg-white rounded-lg p-1.5 text-center border border-gray-100">
+          <div className="text-xs text-gray-400">Escrow</div>
+          <div className="font-bold text-gray-600 text-xs">{sc.newEscrow > 0 ? money(sc.newEscrow) : '—'}</div>
+        </div>
+        <div className="bg-blue-50 rounded-lg p-1.5 text-center border border-blue-100">
+          <div className="text-xs text-gray-400">Total</div>
+          <div className="font-bold text-blue-800 text-xs">{money(sc.newTotalPayment)}</div>
+        </div>
+      </div>
+      {/* Monthly savings */}
+      <div className={`rounded-lg p-2 text-center border mb-2 ${sc.monthlySavings > 0 ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
+        <div className="text-xs text-gray-500">Monthly savings vs today</div>
+        <div className={`font-bold text-sm ${sc.monthlySavings > 0 ? 'text-green-700' : 'text-red-700'}`}>
+          {sc.monthlySavings > 0 ? '+' : ''}{money(sc.monthlySavings)}/mo
         </div>
       </div>
 
@@ -242,7 +251,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
         {/* Top summary */}
         <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-gray-200 border-b border-gray-200">
           <SummaryCell label="Paying Now" value={`${money(currentTotalPayment)}/mo`} sub="All current obligations" />
-          <SummaryCell label="After Refinance" value={`${money(s.newTotalPayment)}/mo`} sub="New mortgage + remaining obligations" />
+          <SummaryCell label="After Refinance" value={`${money(s.newTotalPayment)}/mo`} sub={`P&I: ${money(s.newPI)} + Escrow: ${s.newEscrow > 0 ? money(s.newEscrow) : '—'}`} />
           <SummaryCell label="Monthly Savings" value={`${money(s.monthlySavings)}/mo`} highlight sub={`${money(s.annualSavings)}/yr · ${money(s.fiveYearSavings)} over 5 yrs`} />
           <SummaryCell label="Cash Out to Client" value={s.cashOut > 0 ? `~${money(netCashOut)}` : '—'} sub={s.cashOut > 0 ? 'Net after closing costs' : 'Rate & Term refi'} />
         </div>
@@ -255,7 +264,9 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
               { label: 'Loan Amount', value: money(s.newLoanAmount) },
               { label: 'Interest Rate', value: pct(s.rate), blue: true },
               { label: 'Term', value: s.isARM ? `${s.armType || 'ARM'} → 30yr` : '30 Year Fixed' },
-              { label: 'New Mo. Payment', value: money(s.newPI) + '/mo', blue: true },
+              { label: 'P&I Payment', value: money(s.newPI) + '/mo', blue: true },
+              { label: 'Escrow (T&I)', value: s.newEscrow > 0 ? money(s.newEscrow) + '/mo' : '—' },
+              { label: 'Total Payment', value: money(s.newTotalPayment) + '/mo', blue: true },
               { label: 'Recoupment', value: s.breakevenMonths === 0 ? 'Immediate' : `${s.breakevenMonths} months` },
             ].map((item, i) => (
               <div key={i} className="px-4 py-3">
