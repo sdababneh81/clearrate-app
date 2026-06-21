@@ -60,15 +60,15 @@ const inpHighlight = "w-full border-2 border-blue-400 rounded-lg px-3 py-2.5 tex
 const fmt$ = (n) => n ? '$' + Math.round(n).toLocaleString() : '—';
 const fmtPct = (n) => n ? n.toFixed(3) + '%' : '—';
 
-export default function App() {
+export default function App({ user, profile: userProfile, activeRateSheet, crmSession, isIframe, onOpenAdmin, onSignOut, onRateSheetUpdate }) {
   const [step, setStep] = useState(0);
   const [error, setError] = useState('');
   const [creditFile, setCreditFile] = useState(null);
   const [creditStatus, setCreditStatus] = useState('idle');
-  const [rateSheetFile, setRateSheetFile] = useState(null);
-  const [rateSheetStatus, setRateSheetStatus] = useState('idle');
   const [parsedCredit, setParsedCredit] = useState(null);
-  const [parsedRateSheet, setParsedRateSheet] = useState(null);
+  // Rate sheet now comes from Supabase (admin uploads once, all LOs get it)
+  const [parsedRateSheet, setParsedRateSheet] = useState(activeRateSheet || null);
+  const rateSheetStatus = activeRateSheet ? 'success' : 'idle';
 
   const [profile, setProfile] = useState({
     borrowerName: '', ficoScore: '', estimatedValue: '',
@@ -92,9 +92,42 @@ export default function App() {
   const [selectedPrograms, setSelectedPrograms] = useState(['Conventional', 'FHA']);
   const [result, setResult] = useState(null);
   const [generating, setGenerating] = useState(false);
+  const [crmBadge, setCrmBadge] = useState('');
   const adminMargins = { fha: 0.5, conv: 0.5, va: 0.375 };
 
   const setP = (key, val) => setProfile(p => ({ ...p, [key]: val }));
+
+  // Sync activeRateSheet from Supabase when it changes
+  useEffect(() => {
+    if (activeRateSheet && !parsedRateSheet) {
+      setParsedRateSheet(activeRateSheet);
+    }
+  }, [activeRateSheet]);
+
+  // Pre-populate from CRM session if provided
+  useEffect(() => {
+    if (!crmSession?.borrower) return;
+    const b = crmSession.borrower;
+    setProfile(p => ({
+      ...p,
+      borrowerName: b.name || p.borrowerName,
+      ficoScore: b.fico || p.ficoScore,
+      currentBalance: b.currentBalance || p.currentBalance,
+      currentRate: b.currentRate || p.currentRate,
+      currentTermRemaining: b.currentTermRemaining || p.currentTermRemaining,
+      estimatedValue: b.estimatedValue || p.estimatedValue,
+      escrow: b.escrow || p.escrow,
+      mortgageLender: b.mortgageLender || p.mortgageLender,
+      propertyAddress: b.address || p.propertyAddress,
+    }));
+    if (b.isVeteran !== undefined) setIsVeteran(b.isVeteran);
+    if (crmSession.debts?.length) {
+      setDebts(crmSession.debts.map(d => ({ ...d, selected: true })));
+    }
+    if (crmSession.source) {
+      setCrmBadge(`Data pre-loaded from CRM`);
+    }
+  }, [crmSession]);
 
   // Auto-calculate P&I when balance/rate/term change
   const calculatedPI = (() => {
@@ -166,29 +199,7 @@ export default function App() {
     } catch (e) { setCreditStatus('error'); setError('Credit report error: ' + e.message); }
   };
 
-  const handleRateSheet = async (file) => {
-    setRateSheetFile(file); setRateSheetStatus('loading'); setError('');
-    try {
-      // Pass client profile so Claude can apply correct LLPAs
-      const clientCtx = {
-        ficoScore: profile.ficoScore || parsedCredit?.ficoScores?.transunion || 680,
-        currentRate: parseFloat(profile.currentRate) || null,
-        ltv: profile.estimatedValue && profile.currentBalance
-          ? Math.round((parseFloat(profile.currentBalance) / parseFloat(profile.estimatedValue)) * 100)
-          : null,
-        loanType: isVeteran ? 'VA' : 'Conventional',
-        purpose: 'rate/term refinance',
-      };
-      const data = await parseRateSheet(file, clientCtx, adminMargins);
-      console.log('Rate sheet parsed:', JSON.stringify(data, null, 2));
-      if (!data.programs || data.programs.length === 0) {
-        setRateSheetStatus('error');
-        setError('Rate sheet parsed but no programs found. Try uploading again.');
-        return;
-      }
-      setParsedRateSheet(data); setRateSheetStatus('success');
-    } catch (e) { setRateSheetStatus('error'); setError('Rate sheet error: ' + e.message); }
-  };
+  // Rate sheet is now managed by admin via Supabase — no LO upload needed
 
   const lookupProperty = async (address) => {
     if (!address) return;
@@ -293,6 +304,7 @@ export default function App() {
     setDebts([]); setProfile({ borrowerName:'', ficoScore:'', estimatedValue:'', currentBalance:'', originalLoanAmount:'', currentRate:'', currentTermRemaining:'', currentPayment:'', escrow:'', mortgageLender:'', titleCharges:'', cashOutAmount:'', manualRate:'', propertyAddress:'' });
     setIsVeteran(null); setSelectedPrograms(['Conventional','FHA']); setGoalType('rate_term');
     setMarginBPS(''); setMarginDollar(''); setYearsInHome(''); setMaxPointsPct('5');
+    setCrmBadge('');
   };
 
   return (
@@ -303,7 +315,29 @@ export default function App() {
             <div className="bg-blue-400/20 p-2 rounded-lg"><TrendingDown className="w-5 h-5" /></div>
             <div><div className="font-bold text-lg tracking-tight">ClearRate</div><div className="text-blue-300 text-xs">Smart Refinance Analysis</div></div>
           </div>
-          <div className="text-blue-300 text-sm hidden sm:block">Priority 1 Lending</div>
+          <div className="flex items-center gap-3">
+            {rateSheetStatus === 'success' && parsedRateSheet && (
+              <div className="hidden sm:flex items-center gap-1.5 bg-green-500/20 border border-green-400/30 rounded-lg px-3 py-1.5 text-xs text-green-300">
+                <span>📊</span>
+                <span>{parsedRateSheet.effective_date || parsedRateSheet.effectiveDate || 'Rate sheet'} · {parsedRateSheet.programs?.length} programs</span>
+              </div>
+            )}
+            {crmBadge && (
+              <div className="hidden sm:flex items-center gap-1.5 bg-blue-500/20 border border-blue-400/30 rounded-lg px-3 py-1.5 text-xs text-blue-300">
+                <span>🔗</span><span>{crmBadge}</span>
+              </div>
+            )}
+            {onOpenAdmin && (
+              <button onClick={onOpenAdmin} className="hidden sm:flex items-center gap-1.5 bg-purple-500/20 border border-purple-400/30 hover:bg-purple-500/30 rounded-lg px-3 py-1.5 text-xs text-purple-300 transition-colors font-semibold">
+                ⚙️ Admin
+              </button>
+            )}
+            {onSignOut && !isIframe && (
+              <button onClick={onSignOut} className="text-blue-400 hover:text-white text-xs transition-colors">
+                Sign Out
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -335,15 +369,25 @@ export default function App() {
                 )}
               </div>
               <div>
-                <p className="text-sm font-semibold text-gray-700 mb-2">Rate Sheet <span className="text-gray-400">(optional)</span></p>
-                <DropZone label="Drop lender rate sheet PDF" sublabel="Enables automatic program pricing. Skip to use manual rate." onFile={handleRateSheet} status={rateSheetStatus} fileName={rateSheetFile?.name} />
-                {rateSheetStatus === 'success' && parsedRateSheet && (
-                  <div className="mt-3 bg-green-50 border border-green-200 rounded-lg p-3 text-sm">
-                    <div className="font-semibold text-green-800">{parsedRateSheet.programs?.length} programs parsed</div>
-                    <div className="text-green-700 text-xs mt-1">{parsedRateSheet.programs?.map(p => p.type).join(' · ')}</div>
+                <p className="text-sm font-semibold text-gray-700 mb-2">Rate Sheet</p>
+                {parsedRateSheet ? (
+                  <div className="border-2 border-green-300 bg-green-50 rounded-xl p-4 flex items-center gap-3">
+                    <div className="text-2xl">📊</div>
+                    <div>
+                      <div className="font-semibold text-green-800 text-sm">Rate Sheet Active</div>
+                      <div className="text-green-700 text-xs mt-0.5">
+                        Effective: {parsedRateSheet.effective_date || parsedRateSheet.effectiveDate || 'Current'} · {parsedRateSheet.programs?.length} programs loaded
+                      </div>
+                      <div className="text-green-600 text-xs mt-0.5">{parsedRateSheet.programs?.map(p => p.type).join(' · ')}</div>
+                      <div className="text-green-500 text-xs mt-1 italic">Managed by admin · updates automatically</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="border-2 border-amber-300 bg-amber-50 rounded-xl p-4">
+                    <div className="font-semibold text-amber-800 text-sm">⚠️ No rate sheet loaded</div>
+                    <div className="text-amber-700 text-xs mt-1">Ask your admin to upload the current UWM rate sheet. You can still enter a manual rate in Step 2.</div>
                   </div>
                 )}
-                {rateSheetStatus === 'idle' && <div className="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700">No rate sheet? Enter a manual rate in the next step.</div>}
               </div>
             </div>
           </Card>
