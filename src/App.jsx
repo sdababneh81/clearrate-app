@@ -167,7 +167,16 @@ export default function App() {
   const handleRateSheet = async (file) => {
     setRateSheetFile(file); setRateSheetStatus('loading'); setError('');
     try {
-      const data = await parseRateSheet(file, adminMargins);
+      // Pass client profile so Claude can apply correct LLPAs
+      const clientCtx = {
+        ficoScore: profile.ficoScore || parsedCredit?.ficoScores?.transunion || 680,
+        ltv: profile.estimatedValue && profile.currentBalance
+          ? Math.round((parseFloat(profile.currentBalance) / parseFloat(profile.estimatedValue)) * 100)
+          : null,
+        loanType: isVeteran ? 'VA' : 'Conventional',
+        purpose: 'rate/term refinance',
+      };
+      const data = await parseRateSheet(file, clientCtx, adminMargins);
       setParsedRateSheet(data); setRateSheetStatus('success');
     } catch (e) { setRateSheetStatus('error'); setError('Rate sheet error: ' + e.message); }
   };
