@@ -161,7 +161,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
   const [activeGoalTab, setActiveGoalTab] = useState('rate_term');
   const [productTab, setProductTab] = useState('fixed'); // 'fixed' | 'arm'
 
-  const { scenarios, recommended, currentTotalPayment, currentMortgagePI, debtPaymentTotal, remainingPayments } = result;
+  const { scenarios, recommended, currentTotalPayment, currentMortgagePI, debtPaymentTotal, remainingPayments, lowRateWarning, currentRate: resultCurrentRate } = result;
 
   const paidDebts = selectedDebts.filter(d => d.selected);
   const remainingDebts = selectedDebts.filter(d => !d.selected);
@@ -172,7 +172,43 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
   const armScenarios = visibleScenarios.filter(sc => sc.isARM);
 
   const s = activeScenario || result.recommended;
-  if (!s) return <div className="text-red-500 p-4">No scenarios could be generated. Check inputs.</div>;
+  if (!s) return (
+    <div className="space-y-4 p-2">
+      {lowRateWarning ? (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-5">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">📉</span>
+            <div>
+              <div className="font-bold text-amber-900 text-base mb-1">Low Rate Borrower — Refi Requires Justification</div>
+              <div className="text-amber-800 text-sm leading-relaxed">{lowRateWarning}</div>
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                <div className="bg-white rounded-lg p-2.5 border border-amber-200">
+                  <div className="font-semibold text-amber-700 mb-1">Current Rate</div>
+                  <div className="text-2xl font-bold text-amber-900">{resultCurrentRate}%</div>
+                  <div className="text-amber-600">Today's market: 6–7.5%</div>
+                </div>
+                <div className="bg-white rounded-lg p-2.5 border border-amber-200">
+                  <div className="font-semibold text-amber-700 mb-1">Best Path Forward</div>
+                  <div className="font-bold text-amber-900">Debt Consolidation</div>
+                  <div className="text-amber-600">Freed payments offset higher rate</div>
+                </div>
+                <div className="bg-white rounded-lg p-2.5 border border-amber-200">
+                  <div className="font-semibold text-amber-700 mb-1">Or Consider</div>
+                  <div className="font-bold text-amber-900">Cash-Out + Debts</div>
+                  <div className="text-amber-600">Go back to Step 3 and select debts</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-5 text-center">
+          <div className="text-red-500 font-semibold mb-1">No scenarios could be generated</div>
+          <div className="text-red-400 text-sm">Check that a rate sheet is uploaded, loan type is set, and borrower profile is complete.</div>
+        </div>
+      )}
+    </div>
+  );
 
   const netCashOut = s.cashOut > 0 ? Math.max(0, s.cashOut - (s.netClosingCosts || 0)) : 0;
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -219,8 +255,15 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
               ))}
             </div>
           ) : (
-            <div className="bg-gray-50 border border-gray-200 rounded-xl p-6 text-center text-gray-400">
-              No 30-year fixed options available. Upload a rate sheet for pricing.
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 text-center">
+              <div className="text-amber-700 font-semibold mb-1">
+                {lowRateWarning ? '📉 No beneficial fixed rates found' : 'No 30-year fixed options available'}
+              </div>
+              <div className="text-amber-600 text-sm">
+                {lowRateWarning
+                  ? `Borrower's current ${resultCurrentRate}% rate is below today's market. Add debts to pay off or cash-out to offset the payment increase.`
+                  : 'Upload a rate sheet to enable automatic pricing.'}
+              </div>
             </div>
           )
         )}
