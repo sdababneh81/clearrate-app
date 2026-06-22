@@ -1,13 +1,30 @@
 import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
+// Support both new publishable key and legacy anon key
 const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY
+const SUPABASE_PUBLISHABLE = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
 
-if (!SUPABASE_URL || !SUPABASE_ANON) {
+const KEY = SUPABASE_PUBLISHABLE || SUPABASE_ANON
+
+if (!SUPABASE_URL || !KEY) {
   console.error('Missing Supabase env vars. Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY')
 }
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON)
+export const supabase = createClient(SUPABASE_URL, KEY, {
+  global: {
+    headers: {
+      'Accept': 'application/json',
+    }
+  },
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+  db: {
+    schema: 'public',
+  },
+})
 
 // ─── Auth helpers ────────────────────────────────────────────
 export async function signIn(email, password) {
