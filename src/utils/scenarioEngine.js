@@ -33,7 +33,7 @@ function matchProgram(sheetProgram, selectedProgram) {
 }
 
 function buildScenario({
-  rate, netPoints, program, goal, loanAmount, termYears,
+  rate, netPoints, basePoints = null, llpaHits = null, program, goal, loanAmount, termYears,
   clientProfile, selectedDebts, marginBPS, marginDollar,
   yearsInHome, isARM = false, armInfo = null,
   strategyTag = null, strategyLabel = null, efficiencyTag = null, efficiencyLabel = null,
@@ -67,7 +67,7 @@ function buildScenario({
   const score = scoreRateOption({ monthlySavings, breakevenMonths, netClosingCosts, lifetimeInterestSavings }, yearsInHome);
 
   return {
-    rate, netPoints, program, goal, loanAmount: newLoanAmount, termYears, isARM, armInfo,
+    rate, netPoints, basePoints: basePoints ?? netPoints, llpaHits: llpaHits || null, program, goal, loanAmount: newLoanAmount, termYears, isARM, armInfo,
     lenderCreditPct, borrowerPaysPct, lenderCredit, pointsCost,
     debtBalanceTotal, debtPaymentTotal,
     titleCharges, lenderFees,
@@ -176,6 +176,8 @@ export function generateScenarios({
         const sc = buildScenario({
           rate: selected.adjustedRate,
           netPoints: selected.netPoints,
+          basePoints: selected.basePoints ?? selected.netPoints,
+          llpaHits: rateSheet?.borrowerLLPAs || null,
           program: program.type,
           goal, loanAmount: baseLoanAmount, termYears: term,
           clientProfile: { ...clientProfile, cashOutAmount: cashOut },
@@ -220,4 +222,5 @@ export function generateScenarios({
     remainingPayments,
   };
 }
+
 
