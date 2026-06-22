@@ -1,30 +1,15 @@
 import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-// Use publishable key if available, fall back to anon key
-const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY
+// IMPORTANT: Use the legacy anon key (eyJ...) NOT the publishable key (sb_publishable_...)
+// The publishable key is for the new Data API; supabase-js v2 uses the legacy anon key
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error('Missing Supabase env vars')
+  console.error('[Supabase] Missing env vars:', { url: !!SUPABASE_URL, key: !!SUPABASE_KEY })
 }
 
-// Create client with explicit headers to fix 406 errors
-export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-  },
-  global: {
-    headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'Prefer': 'return=representation',
-    },
-  },
-})
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
 // ─── Auth helpers ─────────────────────────────────────────────
 export async function signIn(email, password) {
@@ -47,17 +32,12 @@ export async function signOut() {
   if (error) throw error
 }
 
-export async function getSession() {
-  const { data: { session } } = await supabase.auth.getSession()
-  return session
-}
-
 export async function getProfile(userId) {
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
     .eq('id', userId)
-    .single()
+    .maybeSingle()
   if (error) throw error
   return data
 }
@@ -76,7 +56,6 @@ export async function getActiveRateSheet() {
 }
 
 export async function saveRateSheet(programs, effectiveDate, llpasApplied, filename, userId) {
-  // Deactivate existing
   await supabase.from('rate_sheets').update({ is_active: false }).eq('is_active', true)
   const { data, error } = await supabase
     .from('rate_sheets')
@@ -97,7 +76,7 @@ export async function saveRateSheet(programs, effectiveDate, llpasApplied, filen
 export async function getRateSheetHistory() {
   const { data, error } = await supabase
     .from('rate_sheets')
-    .select('id, effective_date, raw_filename, is_active, created_at, uploaded_by')
+    .select('id, effective_date, raw_filename, is_active, created_at')
     .order('created_at', { ascending: false })
     .limit(20)
   if (error) throw error
@@ -131,20 +110,6 @@ export async function updateUserActive(userId, active) {
 }
 
 // ─── CRM Session helpers ──────────────────────────────────────
-export async function saveCRMSession(sessionId, borrowerData) {
-  const { data, error } = await supabase
-    .from('crm_sessions')
-    .upsert({
-      session_id: sessionId,
-      borrower_data: borrowerData,
-      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    })
-    .select()
-    .single()
-  if (error) throw error
-  return data
-}
-
 export async function getCRMSession(sessionId) {
   const { data, error } = await supabase
     .from('crm_sessions')
