@@ -32,26 +32,21 @@ export function calcBreakeven(netCost, monthlySavings) {
 
 /**
  * Analyze rate stack efficiency using cumulative cost analysis.
- * 
+ *
  * For each rate, calculates:
  * - stepEff: cost per 0.125% vs the immediately adjacent rate
- * - cumEff: all-in cost per 0.125% measured from the anchor (best credit rate)
  * - cliff: true if this step crosses a major pricing cliff
  * - zone: A (best credit region), B (balanced), C (premium/past cliff)
  * - tag: sweetspot_strong | sweetspot | normal | marginal | avoid | anchor
  *
- * The KEY insight: use CUMULATIVE efficiency to smooth over bad single steps.
- * A rate might look expensive step-by-step but be worth it cumulatively.
+ * Cliff detection, zone grading, and the points cap all operate on the LENDER
+ * NET PRICE (netPoints) — the discount points the BORROWER actually pays. The
+ * broker margin is YSP comp earned separately and is NOT part of the borrower's
+ * points; it's added only for the cost-to-borrower display downstream.
  */
 export function analyzeRateStack(rates, marginBPS = 0) {
-  // IMPORTANT: cliff detection, zone grading, and the points cap all operate on the
-  // LENDER NET PRICE (netPoints) — the discount points the BORROWER actually pays.
-  // The broker margin is YSP comp earned separately and is NOT part of the borrower's
-  // points. We add it only for the final cost-to-borrower display downstream.
   const marginPct = marginBPS / 100;
   // Cliff = the first buydown step that costs more than STEP_CLIFF points per 0.125%.
-  // Buydown cost is the LENDER net price delta (the discount points the borrower pays).
-  // The broker margin is YSP comp and is NOT part of this.
   const STEP_CLIFF = 0.80;   // first step above this pt/0.125% = the cliff
   const STRONG = 0.35;       // step <= this = strong value
   const GOOD = 0.60;         // step <= this = good value
@@ -121,22 +116,34 @@ export function analyzeRateStack(rates, marginBPS = 0) {
  * net price (netPoints = borrower discount points). Margin is added only for the
  * cost-to-borrower figures used to decide no_cost / margin_cost coverage.
  *
+ * THE POINTS CAP IS A HARD CEILING. maxPointsPct caps (borrower discount points +
+ * settlement fees) — margin excluded as YSP, per business rule. The selector will
+ * NEVER return a rate whose discount points + settlement exceed the cap when ANY
+ * rate is within the cap. A final guard enforces this for every strategy.
+ *
  * The three core strategies are distinct points on the buydown curve, ordered:
  *   no_cost (highest rate, borrower pays least) >
  *   margin_cost (middle) >
- *   lowest_rate (lowest rate, borrower pays most)
+ *   lowest_rate (lowest rate, borrower pays most — but still within cap)
  */
 export function selectRateForStrategy(analyzedRates, strategy, newLoanAmount, titleCharges, lenderFees, marginBPS, maxPointsPct = 5.0) {
+  if (!analyzedRates?.length) return null;
+
   const marginPct = marginBPS / 100;
   const totalFixedCosts = (titleCharges || 0) + (lenderFees || 0);
   const settlementPct = newLoanAmount > 0 ? (totalFixedCosts / newLoanAmount) * 100 : 0;
 
+  // Robust cap: blank / NaN / non-finite => no usable cap, fall back to a sane 5.0.
+  const capRaw = parseFloat(maxPointsPct);
+  const cap = Number.isFinite(capRaw) && capRaw > 0 ? capRaw : 5.0;
+  const CAP_EPS = 0.001;
+
   // Borrower discount points = positive lender net price. Margin is separate YSP.
   const discountPoints = (r) => Math.max(0, r.netPoints);
 
-  // Points cap limits DISCOUNT POINTS + SETTLEMENT FEES (per Sam). Margin excluded.
+  // Cap is on DISCOUNT POINTS + SETTLEMENT FEES (per Sam). Margin excluded.
   const totalBorrowerPointCost = (r) => discountPoints(r) + settlementPct;
-  const withinCap = analyzedRates.filter(r => totalBorrowerPointCost(r) <= maxPointsPct + 0.001);
+  const withinCap = (r) => totalBorrowerPointCost(r) <= cap + CAP_EPS;
 
   // Net cash to close after margin applied (used only for no_cost coverage test)
   const borrowerNetCost = (r) => {
@@ -147,60 +154,71 @@ export function selectRateForStrategy(analyzedRates, strategy, newLoanAmount, ti
   const lowestRateOf = (arr) => arr.length ? arr.reduce((lo, r) => r.adjustedRate < lo.adjustedRate ? r : lo, arr[0]) : null;
   const mostCreditOf = (arr) => arr.length ? arr.reduce((b, r) => r.netPoints < b.netPoints ? r : b, arr[0]) : null;
 
-  // Window of usable rates: not past cliff AND within the points+settlement cap.
-  // Cascade fallbacks so we never return null even when the cap excludes everything.
-  const eligible = withinCap.filter(r => !r.pastCliff && r.tag !== 'avoid');
-  const notPastCliffInCap = withinCap.filter(r => !r.pastCliff);
-  const notPastCliffAny = analyzedRates.filter(r => !r.pastCliff);
-  const safePool =
-    eligible.length ? eligible :
-    notPastCliffInCap.length ? notPastCliffInCap :
-    withinCap.length ? withinCap :
-    notPastCliffAny.length ? notPastCliffAny :
-    analyzedRates;
+  // Pools, all already filtered to the hard cap.
+  const capped = analyzedRates.filter(withinCap);
+  const cappedClean = capped.filter(r => !r.pastCliff && r.tag !== 'avoid');
+  const cappedNotCliff = capped.filter(r => !r.pastCliff);
+
+  // The eligible pool prefers clean (within cap, before cliff, not avoid),
+  // then within-cap-not-cliff, then any within-cap. Only if the cap excludes
+  // everything do we fall to the least-cost rate overall (degenerate sheet).
+  const pool =
+    cappedClean.length ? cappedClean :
+    cappedNotCliff.length ? cappedNotCliff :
+    capped.length ? capped : null;
+
+  let pick;
 
   switch (strategy) {
     case 'lowest_rate': {
-      // Lowest rate before the cliff AND within the cap. Borrower pays discount points.
-      // If the cap excluded everything (degenerate, e.g. 0% cap with real fees),
-      // fall back to the least-cost rate so we never recommend an over-cap rate.
-      const capped = withinCap.filter(r => !r.pastCliff && r.tag !== 'avoid');
-      if (capped.length) return lowestRateOf(capped);
-      const cappedAny = withinCap.filter(r => !r.pastCliff);
-      if (cappedAny.length) return lowestRateOf(cappedAny);
-      // Nothing within cap — pick the least discount-points rate available
-      return [...safePool].sort((a, b) => discountPoints(a) - discountPoints(b))[0] || lowestRateOf(safePool);
+      // Lowest rate that still lives within the hard cap.
+      pick = pool ? lowestRateOf(pool)
+                  : [...analyzedRates].sort((a, b) => discountPoints(a) - discountPoints(b))[0];
+      break;
     }
 
     case 'no_cost': {
       // Borrower brings ~$0: lender credit (after margin) covers all closing costs.
-      // Lowest rate that fully covers; if margin eats the credit and none cover,
-      // fall back to the most-credit rate (least cost to borrower).
+      // No-cost rates are inherently within cap (zero/negative discount points).
       const covers = analyzedRates.filter(r => borrowerNetCost(r) <= 0);
-      if (covers.length) return lowestRateOf(covers);
-      return mostCreditOf(analyzedRates) || lowestRateOf(safePool);
+      pick = covers.length ? lowestRateOf(covers) : mostCreditOf(analyzedRates);
+      break;
     }
 
     case 'margin_cost': {
-      // Middle ground: borrower pays ~1 discount point on top of settlement/closing costs.
-      // Target borrower discount points ≈ 1.0%.
+      // Middle ground: target ~1.0 borrower discount point, within cap.
       const TARGET = 1.0;
-      const cand = safePool.length ? safePool : analyzedRates;
-      const ranked = [...cand].sort((a, b) =>
-        Math.abs(discountPoints(a) - TARGET) - Math.abs(discountPoints(b) - TARGET));
-      return ranked[0] || lowestRateOf(cand);
+      const cand = pool || analyzedRates;
+      pick = [...cand].sort((a, b) =>
+        Math.abs(discountPoints(a) - TARGET) - Math.abs(discountPoints(b) - TARGET))[0];
+      break;
     }
 
     case 'low_cost': {
-      // Lowest rate where borrower discount points <= 1.0% (catches pricing anomalies).
-      const eligibleLow = safePool.filter(r => discountPoints(r) <= 1.0 + 0.001);
-      if (eligibleLow.length) return lowestRateOf(eligibleLow);
-      return [...safePool].sort((a, b) => discountPoints(a) - discountPoints(b))[0] || lowestRateOf(safePool);
+      // Lowest rate where borrower discount points <= 1.0% (catches anomalies), within cap.
+      const cand = (pool || analyzedRates).filter(r => discountPoints(r) <= 1.0 + CAP_EPS);
+      pick = cand.length ? lowestRateOf(cand)
+                         : [...(pool || analyzedRates)].sort((a, b) => discountPoints(a) - discountPoints(b))[0];
+      break;
     }
 
     default:
-      return lowestRateOf(safePool);
+      pick = pool ? lowestRateOf(pool) : mostCreditOf(analyzedRates);
   }
+
+  // ── HARD CAP GUARD ──────────────────────────────────────────────────────
+  // No strategy may ever return a rate that blows the cap when a within-cap
+  // rate exists. If the pick exceeds the cap, walk UP the stack (higher rate =
+  // fewer discount points) to the cheapest rate that fits under the ceiling.
+  if (pick && !withinCap(pick) && capped.length) {
+    // Prefer the lowest rate within cap for lowest_rate/low_cost; the
+    // least-cost (most credit) within cap otherwise.
+    pick = (strategy === 'lowest_rate' || strategy === 'low_cost')
+      ? lowestRateOf(capped)
+      : mostCreditOf(capped);
+  }
+
+  return pick || lowestRateOf(analyzedRates);
 }
 
 export function scoreRateOption(scenario, yearsInHome = null) {
@@ -225,5 +243,3 @@ export function scoreRateOption(scenario, yearsInHome = null) {
   const tw = hw + sw + rw + lw;
   return Math.round((horizonScore*(hw/tw) + savingsScore*(sw/tw) + recoupScore*(rw/tw) + lifetimeScore*(lw/tw)) * 10) / 10;
 }
-
-
