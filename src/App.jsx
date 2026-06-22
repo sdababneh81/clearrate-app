@@ -93,6 +93,8 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
   const [result, setResult] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [crmBadge, setCrmBadge] = useState('');
+  const [pricingStrategies, setPricingStrategies] = useState(['lowest_rate', 'margin_cost', 'no_cost']);
+  const [lenderFees, setLenderFees] = useState('');
   const adminMargins = { fha: 0.5, conv: 0.5, va: 0.375 };
 
   const setP = (key, val) => setProfile(p => ({ ...p, [key]: val }));
@@ -280,6 +282,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         escrow: parseFloat(profile.escrow) || 0,
         estimatedValue: parseFloat(profile.estimatedValue) || 0,
         titleCharges: parseFloat(profile.titleCharges) || 0,
+        lenderFees: parseFloat(lenderFees) || 0,
         cashOutAmount: parseFloat(profile.cashOutAmount) || 0,
         ficoScore: parseFloat(profile.ficoScore) || null,
         mortgageLender: profile.mortgageLender,
@@ -296,6 +299,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         marginDollar: parseFloat(marginDollar) || 0,
         yearsInHome: parseFloat(yearsInHome) || null,
         maxPointsPct: parseFloat(maxPointsPct) ?? 5.0,
+        pricingStrategies,
       });
       console.log('[App] Generate result:', { scenarios: res.scenarios.length, rateSheet: !!parsedRateSheet, programs: parsedRateSheet?.programs?.length, lowRateWarning: res.lowRateWarning });
       if (!res.scenarios.length) {
@@ -314,7 +318,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     setDebts([]); setProfile({ borrowerName:'', ficoScore:'', estimatedValue:'', currentBalance:'', originalLoanAmount:'', currentRate:'', currentTermRemaining:'', currentPayment:'', escrow:'', mortgageLender:'', titleCharges:'', cashOutAmount:'', manualRate:'', propertyAddress:'' });
     setIsVeteran(null); setSelectedPrograms(['Conventional','FHA']); setGoalType('rate_term');
     setMarginBPS(''); setMarginDollar(''); setYearsInHome(''); setMaxPointsPct('5');
-    setCrmBadge('');
+    setCrmBadge(''); setLenderFees(''); setPricingStrategies(['lowest_rate', 'margin_cost', 'no_cost']);
   };
 
   return (
@@ -492,6 +496,9 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                 <div className="grid grid-cols-2 gap-4">
                   <Field label="Margin in BPS" hint="e.g. 150 = 1.5%">
                     <input className={inp} type="number" value={marginBPS} onChange={e => handleMarginBPS(e.target.value)} placeholder="e.g. 150" />
+                </Field>
+                <Field label="Lender Fees (Processing + Underwriting)" hint="Total of lender's processing and underwriting fees">
+                    <input className={inp} type="number" value={lenderFees} onChange={e => setLenderFees(e.target.value)} placeholder="e.g. 1495" />
                   </Field>
                   <Field label="Margin in Dollars" hint="Auto-calculated from BPS">
                     <input className={inp} type="number" value={marginDollar} onChange={e => handleMarginDollar(e.target.value)} placeholder="e.g. 4500" />
@@ -599,6 +606,32 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
               </div>
             </Card>
 
+            <Card title="Pricing Strategy">
+              <p className="text-sm text-gray-500 mb-4">Select one or more strategies — you'll get a separate tab for each in the analysis.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+                {[
+                  ['lowest_rate','📉','Lowest Rate That Makes Sense','Best rate before the first pricing cliff. Ideal for long-term holds.'],
+                  ['margin_cost','⚖️','Margin Cost','Rate where lender credit covers your margin + all fees. Net $0 to borrower.'],
+                  ['no_cost','🎁','No Cost','Lender credit covers title + fees. Best for short-term holds or cash-strapped clients.'],
+                  ['low_cost','💰','Low Cost','Lowest rate with borrower paying ≤1% points. Balanced option.'],
+                ].map(([id, icon, label, desc]) => {
+                  const active = pricingStrategies.includes(id);
+                  return (
+                    <button key={id} onClick={() => setPricingStrategies(prev =>
+                      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+                    )} className={`text-left p-4 rounded-xl border-2 transition-all ${active ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}>
+                      <div className="flex items-start justify-between">
+                        <div className="text-2xl mb-2">{icon}</div>
+                        {active && <CheckCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />}
+                      </div>
+                      <div className="font-bold text-gray-900 text-sm">{label}</div>
+                      <div className="text-xs text-gray-500 mt-1">{desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </Card>
+
             <Card title="Loan Programs">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {[['Conventional','🏦','Best for high FICO, 20%+ equity.',false],['FHA','🏛️','Lower FICO OK. MIP required.',false],['VA','🎖️','Veterans only. No PMI.',!isVeteran]].map(([id,icon,desc,disabled]) => (
@@ -661,6 +694,8 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
             clientProfile={{ ...profile, currentBalance: parseFloat(profile.currentBalance), currentRate: parseFloat(profile.currentRate), escrow: parseFloat(profile.escrow) || 0, titleCharges: parseFloat(profile.titleCharges) || 0 }}
             selectedDebts={debts}
             marginBPS={marginBPS}
+            lenderFees={parseFloat(lenderFees) || 0}
+            pricingStrategies={pricingStrategies}
             marginDollar={marginDollar}
             companyName="Priority 1 Lending"
           />
@@ -694,6 +729,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     </div>
   );
 }
+
 
 
 
