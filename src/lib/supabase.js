@@ -120,3 +120,52 @@ export async function getCRMSession(sessionId) {
   if (error) throw error
   return data
 }
+
+// ─── Saved Analyses (client files) ────────────────────────────
+// snapshot = full input state so a file can be reopened, edited, and reprinted.
+export async function saveAnalysis({ id, fileName, borrowerName, snapshot, userId }) {
+  if (id) {
+    // Update existing file
+    const { data, error } = await supabase
+      .from('saved_analyses')
+      .update({ file_name: fileName, borrower_name: borrowerName, snapshot, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  }
+  const { data, error } = await supabase
+    .from('saved_analyses')
+    .insert({ file_name: fileName, borrower_name: borrowerName, snapshot, lo_user_id: userId })
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function getSavedAnalyses(userId) {
+  const { data, error } = await supabase
+    .from('saved_analyses')
+    .select('id, file_name, borrower_name, created_at, updated_at')
+    .eq('lo_user_id', userId)
+    .order('updated_at', { ascending: false })
+    .limit(100)
+  if (error) throw error
+  return data || []
+}
+
+export async function getSavedAnalysis(id) {
+  const { data, error } = await supabase
+    .from('saved_analyses')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw error
+  return data
+}
+
+export async function deleteSavedAnalysis(id) {
+  const { error } = await supabase.from('saved_analyses').delete().eq('id', id)
+  if (error) throw error
+}
