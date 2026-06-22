@@ -93,6 +93,7 @@ function buildScenario({
     currentBalance, cashOut: cashOutAmount || 0,
     monthlySavings, lifetimeInterestSavings, breakevenMonths, score,
     netPointsPct: clientNetPoints,
+    marginBPS: marginBPS || 0,
     strategyTag, strategyLabel, efficiencyTag, efficiencyLabel,
   };
 }
@@ -103,6 +104,7 @@ function buildScenario({
 export function generateScenarios({
   rateSheet, clientProfile, selectedDebts, isVeteran,
   goalType, selectedPrograms, marginBPS, marginDollar,
+  marginsByType = null,
   yearsInHome, maxPointsPct = 5.0,
   pricingStrategies = ['lowest_rate', 'margin_cost', 'no_cost', 'low_cost'],
   runRef = null,
@@ -114,6 +116,20 @@ export function generateScenarios({
   } = clientProfile;
 
   const ref = runRef || makeRunRef();
+
+  // Resolve the broker margin (BPS) for a program by its base loan type. Managers
+  // set these centrally in Admin; the LO never sees or enters them. Falls back to
+  // the legacy single marginBPS if no per-type map was provided.
+  const resolveMargin = (programType) => {
+    if (marginsByType && typeof marginsByType === 'object') {
+      const base = baseLoanType(programType); // 'conventional' | 'fha' | 'va'
+      const v = parseFloat(marginsByType[base]);
+      if (Number.isFinite(v)) return v;
+      const fallback = parseFloat(marginsByType.conventional);
+      if (Number.isFinite(fallback)) return fallback;
+    }
+    return parseFloat(marginBPS) || 0;
+  };
 
   const STRATEGY_LABELS = {
     lowest_rate: '📉 Lowest Rate',
@@ -174,14 +190,15 @@ export function generateScenarios({
 
         const term = program.type?.includes('15') ? 15 : 30;
         const isArm = isARMProgram(program);
+        const progMargin = resolveMargin(program.type);
 
-        const analyzedRates = analyzeRateStack(rawRates, marginBPS);
+        const analyzedRates = analyzeRateStack(rawRates, progMargin);
 
         const selected = selectRateForStrategy(
           analyzedRates, strategy, baseLoanAmount,
           parseFloat(titleCharges) || 0,
           parseFloat(lenderFees) || 0,
-          marginBPS,
+          progMargin,
           maxPointsPct
         );
 
@@ -195,7 +212,7 @@ export function generateScenarios({
           program: program.type,
           goal, loanAmount: baseLoanAmount, termYears: term,
           clientProfile: { ...clientProfile, cashOutAmount: cashOut },
-          selectedDebts, marginBPS, marginDollar, yearsInHome,
+          selectedDebts, marginBPS: progMargin, marginDollar, yearsInHome,
           strategyTag: strategy,
           strategyLabel: STRATEGY_LABELS[strategy],
           efficiencyTag: selected.tag,
