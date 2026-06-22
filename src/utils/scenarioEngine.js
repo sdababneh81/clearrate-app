@@ -3,9 +3,18 @@ import { calcPI, calcBreakeven, scoreRateOption, analyzeRateStack, selectRateFor
 const PROGRAMS_30YR = ['Conventional', 'VA', 'FHA'];
 const PROGRAMS_15YR = ['Conventional 15yr', 'VA 15yr', 'FHA 15yr'];
 
-function isARMProgram(programType) {
-  const t = (programType || '').toLowerCase();
-  return t.includes('arm') || t.includes('5/6') || t.includes('7/6') || t.includes('10/6') || t.includes('sofr');
+/**
+ * Detect ARM programs. Prefer the explicit isARM flag set by the parser; fall back
+ * to sniffing the type/armType strings for older sheets that didn't carry the flag.
+ */
+function isARMProgram(program) {
+  if (program && typeof program === 'object') {
+    if (program.isARM === true) return true;
+    const s = `${program.type || ''} ${program.armType || ''}`.toLowerCase();
+    return /arm|\d\/\d|sofr|adjustable/.test(s);
+  }
+  const t = (program || '').toString().toLowerCase();
+  return /arm|\d\/\d|sofr|adjustable/.test(t);
 }
 
 function baseLoanType(programType) {
@@ -18,28 +27,33 @@ function baseLoanType(programType) {
 
 function matchProgram(sheetProgram, selectedProgram) {
   // Match by base loan type (VA/FHA/Conventional). Both fixed AND ARM programs
-  // of that type match — they get split into separate fixed/ARM tabs later.
-  // 15-year programs are excluded unless explicitly selected.
+  // of that type match — they get split into separate fixed/ARM tabs later via
+  // the isARM flag. 15-year programs are excluded unless explicitly selected.
   const t = sheetProgram.type?.toLowerCase() || '';
   const s = selectedProgram?.toLowerCase() || '';
 
   const sheetBase = baseLoanType(sheetProgram.type);
   const selBase = baseLoanType(selectedProgram);
 
-  // 15-year handling
   const sheetIs15 = t.includes('15');
   const selWants15 = s.includes('15');
   if (selWants15) return sheetIs15 && sheetBase === selBase;
-  if (sheetIs15) return false; // don't match 15yr to a 30yr selection
+  if (sheetIs15) return false;
 
-  // Base type must match (this captures both fixed and ARM of the same type)
   return sheetBase === selBase;
+}
+
+/** Short human-referenceable run id, e.g. CR-7F3K9Q. Stable for the life of a result. */
+function makeRunRef() {
+  const t = Date.now().toString(36).toUpperCase().slice(-4);
+  const r = Math.random().toString(36).toUpperCase().slice(2, 4);
+  return `CR-${t}${r}`;
 }
 
 function buildScenario({
   rate, netPoints, basePoints = null, llpaHits = null, program, goal, loanAmount, termYears,
   clientProfile, selectedDebts, marginBPS, marginDollar,
-  yearsInHome, isARM = false, armInfo = null,
+  yearsInHome, isARM = false, armType = null,
   strategyTag = null, strategyLabel = null, efficiencyTag = null, efficiencyLabel = null,
 }) {
   const {
@@ -71,7 +85,7 @@ function buildScenario({
   const score = scoreRateOption({ monthlySavings, breakevenMonths, netClosingCosts, lifetimeInterestSavings }, yearsInHome);
 
   return {
-    rate, netPoints, basePoints: basePoints ?? netPoints, llpaHits: llpaHits || null, program, goal, loanAmount: newLoanAmount, termYears, isARM, armInfo,
+    rate, netPoints, basePoints: basePoints ?? netPoints, llpaHits: llpaHits || null, program, goal, loanAmount: newLoanAmount, termYears, isARM, armType,
     lenderCreditPct, borrowerPaysPct, lenderCredit, pointsCost,
     debtBalanceTotal, debtPaymentTotal,
     titleCharges, lenderFees,
@@ -85,22 +99,21 @@ function buildScenario({
 
 /**
  * Generate scenarios for all selected pricing strategies.
- * Returns { strategyResults, recommended, lowRateWarning, currentRate, currentTotalPayment, currentMortgagePI, debtPaymentTotal, remainingPayments }
- * 
- * strategyResults: array of { strategy, strategyLabel, scenarios, recommended }
- * For backward compatibility, also returns flat scenarios array.
  */
 export function generateScenarios({
   rateSheet, clientProfile, selectedDebts, isVeteran,
   goalType, selectedPrograms, marginBPS, marginDollar,
   yearsInHome, maxPointsPct = 5.0,
   pricingStrategies = ['lowest_rate', 'margin_cost', 'no_cost', 'low_cost'],
+  runRef = null,
 }) {
   const {
     currentBalance, currentRate, currentTermRemaining,
     escrow = 0, titleCharges = 0, lenderFees = 0,
     cashOutAmount = 0, ficoScore, estimatedValue,
   } = clientProfile;
+
+  const ref = runRef || makeRunRef();
 
   const STRATEGY_LABELS = {
     lowest_rate: '📉 Lowest Rate',
@@ -114,13 +127,12 @@ export function generateScenarios({
   const currentTotalPayment = Math.round(currentMortgagePI + debtPaymentTotal + (parseFloat(escrow) || 0));
   const remainingPayments = Math.round((currentTermRemaining || 30) * 12);
 
-  // Low rate warning
   const lowRateWarning = parseFloat(currentRate) < 5.5 && !selectedDebts.some(d => d.selected) && !cashOutAmount
     ? `This borrower's current rate of ${currentRate}% is well below today's market (6–7.5%). A straight rate/term refi would increase their payment. To make a refinance worthwhile, consider: (1) selecting debts to consolidate on Step 3, or (2) adding a cash-out amount.`
     : null;
 
   if (lowRateWarning) {
-    return { scenarios: [], strategyResults: [], recommended: null, status: 'low_rate', statusReason: lowRateWarning, lowRateWarning, currentRate, currentTotalPayment, currentMortgagePI, debtPaymentTotal, remainingPayments };
+    return { scenarios: [], strategyResults: [], recommended: null, status: 'low_rate', statusReason: lowRateWarning, lowRateWarning, runRef: ref, currentRate, currentTotalPayment, currentMortgagePI, debtPaymentTotal, remainingPayments };
   }
 
   const goals = goalType === 'both' ? ['rate_term', 'cash_out'] : [goalType];
@@ -142,7 +154,6 @@ export function generateScenarios({
       );
 
       if (!matchedPrograms.length) {
-        // Manual rate fallback
         if (clientProfile.manualRate) {
           const rate = parseFloat(clientProfile.manualRate);
           const sc = buildScenario({
@@ -162,18 +173,16 @@ export function generateScenarios({
         if (!rawRates.length) continue;
 
         const term = program.type?.includes('15') ? 15 : 30;
-        const isArm = isARMProgram(program.type);
+        const isArm = isARMProgram(program);
 
-        // Analyze the rate stack for this program
         const analyzedRates = analyzeRateStack(rawRates, marginBPS);
 
-        // Select the best rate for this strategy — enforce the borrower's max points cap
         const selected = selectRateForStrategy(
           analyzedRates, strategy, baseLoanAmount,
           parseFloat(titleCharges) || 0,
           parseFloat(lenderFees) || 0,
           marginBPS,
-          parseFloat(maxPointsPct) ?? 5.0
+          maxPointsPct
         );
 
         if (!selected) continue;
@@ -192,7 +201,7 @@ export function generateScenarios({
           efficiencyTag: selected.tag,
           efficiencyLabel: selected.tagLabel,
           isARM: isArm,
-          armType: isArm ? program.type : null,
+          armType: isArm ? (program.armType || program.type) : null,
         });
 
         if (sc.monthlySavings > -9999) strategyScenarios.push(sc);
@@ -215,10 +224,6 @@ export function generateScenarios({
     ? allScenarios.reduce((b, s) => s.score > b.score ? s : b, allScenarios[0])
     : null;
 
-  // Determine an explicit status so the UI never lands on a blank screen.
-  // Possible: 'ok' (>=1 beneficial scenario), 'all_negative' (scenarios exist but
-  // none save money), 'no_programs' (no matching programs / empty rate sheet),
-  // 'no_scenarios' (nothing built at all).
   let status = 'ok';
   let statusReason = null;
 
@@ -238,6 +243,9 @@ export function generateScenarios({
     }
   }
 
+  // Diagnostics: did the sheet even contain ARM programs for the selected types?
+  const armProgramsInSheet = programs.filter(p => isARMProgram(p)).length;
+
   return {
     scenarios: allScenarios,
     strategyResults,
@@ -245,6 +253,8 @@ export function generateScenarios({
     status,
     statusReason,
     lowRateWarning: null,
+    runRef: ref,
+    armProgramsInSheet,
     currentRate,
     currentTotalPayment,
     currentMortgagePI,
@@ -252,6 +262,3 @@ export function generateScenarios({
     remainingPayments,
   };
 }
-
-
-
