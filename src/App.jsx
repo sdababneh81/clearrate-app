@@ -99,7 +99,12 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
   // Sync activeRateSheet from Supabase when it changes
   useEffect(() => {
-    if (activeRateSheet && !parsedRateSheet) {
+    if (activeRateSheet) {
+      console.log('[App] Loading rate sheet from Supabase:', {
+        programs: activeRateSheet.programs?.length,
+        effective_date: activeRateSheet.effective_date,
+        first_program: activeRateSheet.programs?.[0],
+      });
       setParsedRateSheet(activeRateSheet);
     }
   }, [activeRateSheet]);
@@ -292,7 +297,12 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         yearsInHome: parseFloat(yearsInHome) || null,
         maxPointsPct: parseFloat(maxPointsPct) ?? 5.0,
       });
-      if (!res.scenarios.length) { setError('No scenarios generated. Upload a rate sheet or enter a manual rate.'); setGenerating(false); return; }
+      console.log('[App] Generate result:', { scenarios: res.scenarios.length, rateSheet: !!parsedRateSheet, programs: parsedRateSheet?.programs?.length, lowRateWarning: res.lowRateWarning });
+      if (!res.scenarios.length) {
+        setError(res.lowRateWarning || 'No scenarios generated. Add debts to pay off or a cash-out amount to make the refi worthwhile, or enter a manual rate.');
+        setGenerating(false);
+        return;
+      }
       setResult(res); setStep(4);
     } catch (e) { setError('Error: ' + e.message); }
     setGenerating(false);
@@ -684,5 +694,6 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     </div>
   );
 }
+
 
 
