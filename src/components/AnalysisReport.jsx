@@ -95,7 +95,7 @@ function LoanSummaryBar({ scenario: s, clientProfile }) {
   );
 }
 
-function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStrategyResult, currentTotalPayment, debtPaymentTotal, currentMortgagePI, marginBPS, marginDollar, lenderFees, companyName, today }) {
+function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStrategyResult, currentTotalPayment, debtPaymentTotal, currentMortgagePI, marginBPS, marginDollar, lenderFees, companyName, today, runRef }) {
   const netCashOut = s.cashOut > 0 ? Math.max(0, s.cashOut - (s.netClosingCosts || 0)) : 0;
   const brokerMarginPct = (parseFloat(marginBPS) || 0) / 100;
   const baseNetPoints = (s.netPointsPct ?? 0) - brokerMarginPct;
@@ -241,7 +241,7 @@ function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStr
         <div class="hero-brand">${companyName} | Refinance Savings Analysis</div>
         <div class="hero-name">Prepared for: ${clientProfile.borrowerName || 'Borrower'}</div>
         <div class="hero-sub">${termLabel} · ${goalLabel}${stratLabel ? ' · ' + stratLabel : ''}${s.monthlySavings > 0 ? ' · Net savings before sale: +' + money(s.monthlySavings * 60) + ' over 5 yrs' : ''}</div>
-        <div class="hero-sub">${today}</div>
+        <div class="hero-sub">${today}${runRef ? ' · Ref ' + runRef : ''}</div>
       </div>
       <div class="hero-badge">★ AI RECOMMENDED</div>
     </div>
@@ -331,8 +331,8 @@ function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStr
 export default function AnalysisReport({ result, clientProfile, selectedDebts, marginBPS, marginDollar, lenderFees = 0, pricingStrategies = [], userRole = 'lo', companyName = 'Priority 1 Lending' }) {
   const isAdmin = userRole === 'admin';
   const [activeScenario, setActiveScenario] = useState(result.recommended);
-  const [activeGoalTab, setActiveGoalTab] = useState('rate_term');
-  const [productTab, setProductTab] = useState('fixed');
+  const [activeGoalTab, setActiveGoalTab] = useState(result.recommended?.goal || 'rate_term');
+  const [productTab, setProductTab] = useState(result.recommended?.isARM ? 'arm' : 'fixed');
   const [activeStrategy, setActiveStrategy] = useState(
     result.strategyResults?.length ? result.strategyResults[0].strategy : null
   );
@@ -355,7 +355,11 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
   const strategyScenarios = activeStrategyResult?.scenarios || scenarios;
 
   const goalTabs = [...new Set(strategyScenarios.map(sc => sc.goal))];
-  const visibleScenarios = strategyScenarios.filter(sc => sc.goal === activeGoalTab);
+  // Self-heal: if the active goal tab isn't among the goals this strategy actually
+  // produced (e.g. a cash-out-only run while the tab still says rate_term), fall
+  // back to the first available goal so the card grid never renders empty by accident.
+  const effectiveGoalTab = goalTabs.includes(activeGoalTab) ? activeGoalTab : (goalTabs[0] || activeGoalTab);
+  const visibleScenarios = strategyScenarios.filter(sc => sc.goal === effectiveGoalTab);
   const fixedScenarios = visibleScenarios.filter(sc => !sc.isARM);
   const armScenarios = visibleScenarios.filter(sc => sc.isARM);
 
@@ -369,7 +373,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
       activeStrategyResult, currentTotalPayment,
       debtPaymentTotal, currentMortgagePI,
       marginBPS, marginDollar, lenderFees,
-      companyName, today,
+      companyName, today, runRef: result.runRef,
     });
     const w = window.open('', '_blank');
     w.document.write(html);
@@ -440,7 +444,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
         <div className="flex gap-2">
           {goalTabs.map(g => (
             <button key={g} onClick={() => setActiveGoalTab(g)}
-              className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-colors ${activeGoalTab === g ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-colors ${effectiveGoalTab === g ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
               {g === 'rate_term' ? 'Rate & Term' : 'Cash-Out'}
             </button>
           ))}
@@ -528,7 +532,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                 {activeStrategyResult?.strategyLabel ? ` · ${activeStrategyResult.strategyLabel}` : ''}
                 {s.monthlySavings > 0 && ` · Net savings before sale: +${money(s.monthlySavings * 60)}`}
               </div>
-              <div className="text-blue-400 text-xs mt-0.5">{today}</div>
+              <div className="text-blue-400 text-xs mt-0.5">{today}{result.runRef ? <span className="ml-2 font-mono font-semibold text-blue-300">· Ref {result.runRef}</span> : null}</div>
             </div>
             {isCardRecommended(s) && (
               <div className="bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1">
