@@ -48,15 +48,17 @@ function Field({ label, hint, children, highlight }) {
 
 function CalcBadge({ label, value }) {
   return (
-    <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-sm">
+    <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-sm">
       <div className="text-xs text-blue-500 font-medium">{label}</div>
       <div className="font-bold text-blue-800">{value}</div>
     </div>
   );
 }
 
-const inp = "w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent";
-const inpHighlight = "w-full border-2 border-blue-400 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-blue-50";
+const inp = "w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent";
+const inpHighlight = "w-full border-2 border-blue-400 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-blue-50";
+// Selectable option-card (used for goal/program/veteran toggles) — one consistent pattern
+const optionCard = (active) => `text-left p-4 rounded-xl border-2 transition-all ${active ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-blue-300'}`;
 
 const fmt$ = (n) => n ? '$' + Math.round(n).toLocaleString() : '—';
 const fmtPct = (n) => n ? n.toFixed(3) + '%' : '—';
@@ -588,7 +590,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                 <p className="text-sm font-semibold text-gray-700 mb-2">Credit Report <span className="text-red-500">*</span></p>
                 <DropZone label="Drop credit report PDF here" sublabel="Claude AI extracts all tradelines automatically" onFile={handleCreditReport} status={creditStatus} fileName={creditFile?.name} />
                 {creditStatus === 'success' && parsedCredit && (
-                  <div className="mt-3 bg-green-50 border border-green-200 rounded-lg p-3 text-sm">
+                  <div className="mt-3 bg-green-50 border border-green-200 rounded-xl p-4 text-sm">
                     <div className="font-semibold text-green-800">{parsedCredit.borrowerName}</div>
                     <div className="text-green-700 text-xs mt-1">
                       {parsedCredit.tradelines?.length} tradelines · FICO: {parsedCredit.ficoScores?.transunion || parsedCredit.ficoScores?.equifax || '—'}
@@ -816,7 +818,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
             <Card title="Client's Primary Goal">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {[['rate_term','📉','Rate & Term','Lower the rate and/or payment. No cash out.'],['cash_out','💵','Cash-Out','Access equity for improvements, debt payoff, etc.'],['both','🔀','Show Both','Run and compare both scenarios side by side.']].map(([id,icon,label,desc]) => (
-                  <button key={id} onClick={() => setGoalType(id)} className={`text-left p-4 rounded-xl border-2 transition-all ${goalType === id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}>
+                  <button key={id} onClick={() => setGoalType(id)} className={optionCard(goalType === id)}>
                     <div className="text-2xl mb-2">{icon}</div><div className="font-bold text-gray-900">{label}</div><div className="text-sm text-gray-500 mt-1">{desc}</div>
                   </button>
                 ))}
@@ -863,7 +865,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {[['Conventional','🏦','Best for high FICO, 20%+ equity.',false],['FHA','🏛️','Lower FICO OK. MIP required.',false],['VA','🎖️','Veterans only. No PMI.',!isVeteran]].map(([id,icon,desc,disabled]) => (
                   <button key={id} onClick={() => !disabled && toggleProgram(id)} disabled={disabled}
-                    className={`text-left p-4 rounded-xl border-2 transition-all ${disabled ? 'opacity-40 cursor-not-allowed border-gray-200' : selectedPrograms.includes(id) ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}>
+                    className={`${optionCard(selectedPrograms.includes(id))} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}>
                     <div className="flex items-start justify-between">
                       <div className="text-2xl mb-2">{icon}</div>
                       {selectedPrograms.includes(id) && !disabled && <CheckCircle className="w-4 h-4 text-blue-500" />}
