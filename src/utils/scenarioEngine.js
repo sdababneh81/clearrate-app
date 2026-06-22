@@ -8,28 +8,32 @@ function isARMProgram(programType) {
   return t.includes('arm') || t.includes('5/6') || t.includes('7/6') || t.includes('10/6') || t.includes('sofr');
 }
 
+function baseLoanType(programType) {
+  const t = (programType || '').toLowerCase();
+  if (t.includes('va')) return 'va';
+  if (t.includes('fha')) return 'fha';
+  if (t.includes('conv')) return 'conventional';
+  return 'conventional';
+}
+
 function matchProgram(sheetProgram, selectedProgram) {
+  // Match by base loan type (VA/FHA/Conventional). Both fixed AND ARM programs
+  // of that type match — they get split into separate fixed/ARM tabs later.
+  // 15-year programs are excluded unless explicitly selected.
   const t = sheetProgram.type?.toLowerCase() || '';
   const s = selectedProgram?.toLowerCase() || '';
-  
-  // Never match ARM programs to fixed-rate selections
-  const isArm = isARMProgram(sheetProgram.type);
-  
-  if (s.includes('arm')) return isArm;
-  if (isArm) return false; // ARM program won't match fixed selections
-  
-  if (s.includes('15') || s.includes('15yr')) {
-    return (t.includes('15') || t.includes('15yr')) && (
-      (s.includes('va') && t.includes('va')) ||
-      (s.includes('fha') && t.includes('fha')) ||
-      (s.includes('conv') && (t.includes('conv') || t.includes('conventional')))
-    );
-  }
-  if (t.includes('15') || t.includes('15yr')) return false;
-  if (s === 'va') return t.includes('va');
-  if (s === 'fha') return t.includes('fha');
-  if (s === 'conventional') return t.includes('conv') || t.includes('conventional');
-  return false;
+
+  const sheetBase = baseLoanType(sheetProgram.type);
+  const selBase = baseLoanType(selectedProgram);
+
+  // 15-year handling
+  const sheetIs15 = t.includes('15');
+  const selWants15 = s.includes('15');
+  if (selWants15) return sheetIs15 && sheetBase === selBase;
+  if (sheetIs15) return false; // don't match 15yr to a 30yr selection
+
+  // Base type must match (this captures both fixed and ARM of the same type)
+  return sheetBase === selBase;
 }
 
 function buildScenario({
@@ -163,12 +167,13 @@ export function generateScenarios({
         // Analyze the rate stack for this program
         const analyzedRates = analyzeRateStack(rawRates, marginBPS);
 
-        // Select the best rate for this strategy
+        // Select the best rate for this strategy — enforce the borrower's max points cap
         const selected = selectRateForStrategy(
           analyzedRates, strategy, baseLoanAmount,
           parseFloat(titleCharges) || 0,
           parseFloat(lenderFees) || 0,
-          marginBPS
+          marginBPS,
+          parseFloat(maxPointsPct) ?? 5.0
         );
 
         if (!selected) continue;
@@ -222,5 +227,6 @@ export function generateScenarios({
     remainingPayments,
   };
 }
+
 
 
