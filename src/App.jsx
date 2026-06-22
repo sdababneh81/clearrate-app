@@ -126,6 +126,15 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     loadSheet();
   }, []);
 
+  // Auto-set goalType to cash_out when debts are selected or cash-out amount entered
+  useEffect(() => {
+    const hasSelectedDebts = debts.some(d => d.selected);
+    const hasCashOut = parseFloat(profile.cashOutAmount) > 0;
+    if (hasSelectedDebts || hasCashOut) {
+      if (goalType === 'rate_term') setGoalType('cash_out');
+    }
+  }, [debts, profile.cashOutAmount]);
+
   // Pre-populate from CRM session if provided
   useEffect(() => {
     if (!crmSession?.borrower) return;
@@ -213,8 +222,20 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
       }
       const fico = data.ficoScores?.transunion || data.ficoScores?.equifax || data.ficoScores?.experian;
       if (fico) setP('ficoScore', fico);
-      const tradelineDebts = (data.tradelines || []).map(t => ({ ...t, selected: true, analysis: analyzeDebt(t, 6.5) }));
-      setDebts(tradelineDebts);
+      const tradelineDebts = (data.tradelines || [])
+        .map(t => ({ ...t, selected: true, analysis: analyzeDebt(t, 6.5) }))
+        .sort((a, b) => (parseFloat(b.payment) || 0) - (parseFloat(a.payment) || 0));
+      // Prepend mortgage as first item (display only — not payable, just shown for context)
+      const mortgageItem = data.mortgage ? [{
+        name: data.mortgage.lender || 'Current Mortgage',
+        balance: data.mortgage.balance,
+        payment: data.mortgage.payment || 0,
+        type: 'Mortgage',
+        isMortgage: true,
+        selected: false, // mortgage is never "paid off" — it IS being refinanced
+        analysis: null,
+      }] : [];
+      setDebts([...mortgageItem, ...tradelineDebts]);
       setCreditStatus('success');
       // Auto-lookup property value from address
       if (data.address) lookupProperty(data.address);
@@ -373,7 +394,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
       <main className="max-w-4xl mx-auto px-4 py-8">
         <StepIndicator current={step} />
 
-        {error && (
+        {error && step >= 3 && (
           <div className="flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl mb-6 text-sm">
             <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /><span>{error}</span>
           </div>
@@ -575,6 +596,43 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         {/* STEP 3 — Goals */}
         {step === 3 && (
           <div className="space-y-6">
+
+            {/* Pricing Strategy — compact row at top */}
+            <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 shadow-sm">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-bold text-gray-700 uppercase tracking-wide">Pricing Strategy</div>
+                <div className="text-xs text-gray-400">Select all that apply — each gets its own analysis tab</div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { id: 'lowest_rate', icon: '📉', label: 'Lowest Rate', desc: 'Lowest rate before pricing cliff' },
+                  { id: 'margin_cost', icon: '⚖️', label: 'Margin Cost', desc: 'Credit covers margin + fees — $0 out of pocket' },
+                  { id: 'no_cost',     icon: '🎁', label: 'No Cost',    desc: 'Credit covers all closing costs' },
+                  { id: 'low_cost',    icon: '💰', label: 'Low Cost',   desc: '≤1% points — best rate for small cost' },
+                ].map(({ id, icon, label, desc }) => {
+                  const active = pricingStrategies.includes(id);
+                  return (
+                    <button key={id} title={desc}
+                      onClick={() => setPricingStrategies(prev =>
+                        prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+                      )}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                        active
+                          ? 'border-blue-500 bg-blue-600 text-white shadow-sm'
+                          : 'border-gray-300 bg-white text-gray-600 hover:border-blue-400 hover:text-blue-600'
+                      }`}>
+                      <span>{icon}</span>
+                      <span>{label}</span>
+                      {active && <span className="ml-0.5 text-blue-200">✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {pricingStrategies.length === 0 && (
+                <div className="mt-2 text-xs text-red-500 font-semibold">⚠️ Select at least one strategy</div>
+              )}
+            </div>
+
             <Card title="Client's Primary Goal">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {[['rate_term','📉','Rate & Term','Lower the rate and/or payment. No cash out.'],['cash_out','💵','Cash-Out','Access equity for improvements, debt payoff, etc.'],['both','🔀','Show Both','Run and compare both scenarios side by side.']].map(([id,icon,label,desc]) => (
@@ -619,45 +677,6 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                   </div>
                 )}
               </div>
-            </Card>
-
-            <Card title="Pricing Strategy">
-              <p className="text-sm text-gray-500 mb-4">
-                Select one or more options. The system picks the best rate for each strategy using rate stack efficiency analysis — you'll get a separate analysis tab for each.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[
-                  { id: 'lowest_rate', icon: '📉', label: 'Lowest Rate That Makes Sense', pill: 'Best Rate', pillColor: 'bg-blue-100 text-blue-700', desc: 'Lowest rate before the first pricing cliff. Client may pay discount points. Best for long-term holds (7+ yrs).' },
-                  { id: 'margin_cost', icon: '⚖️', label: 'Margin Cost', pill: 'Zero Out-of-Pocket', pillColor: 'bg-purple-100 text-purple-700', desc: 'Rate where lender credit covers broker margin + title + lender fees. Net $0 to borrower.' },
-                  { id: 'no_cost',     icon: '🎁', label: 'No Cost', pill: 'True No Cost', pillColor: 'bg-green-100 text-green-700', desc: 'Lender credit covers ALL closing costs including title. Best for short holds (2-5 yrs) or cash-strapped clients.' },
-                  { id: 'low_cost',   icon: '💰', label: 'Low Cost', pill: '≤1% Points', pillColor: 'bg-amber-100 text-amber-700', desc: 'Lowest rate with borrower paying ≤1% in discount points. Balanced option — good rate, small cost.' },
-                ].map(({ id, icon, label, pill, pillColor, desc }) => {
-                  const active = pricingStrategies.includes(id);
-                  return (
-                    <button key={id} onClick={() => setPricingStrategies(prev =>
-                      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
-                    )} className={`text-left p-4 rounded-xl border-2 transition-all relative ${active ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-gray-200 hover:border-blue-300 bg-white'}`}>
-                      <div className={`absolute top-3 right-3 w-5 h-5 rounded-full border-2 flex items-center justify-center ${active ? 'border-blue-500 bg-blue-500' : 'border-gray-300'}`}>
-                        {active && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
-                      </div>
-                      <div className="text-2xl mb-2">{icon}</div>
-                      <div className="font-bold text-gray-900 text-sm pr-6">{label}</div>
-                      <div className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full mt-1.5 mb-2 ${pillColor}`}>{pill}</div>
-                      <div className="text-xs text-gray-500 leading-relaxed">{desc}</div>
-                    </button>
-                  );
-                })}
-              </div>
-              {pricingStrategies.length === 0 && (
-                <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 font-semibold">
-                  ⚠️ Select at least one pricing strategy to generate the analysis.
-                </div>
-              )}
-              {pricingStrategies.length > 0 && (
-                <div className="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700">
-                  ✓ {pricingStrategies.length} {pricingStrategies.length === 1 ? 'strategy' : 'strategies'} selected — analysis will show {pricingStrategies.length === 1 ? '1 tab' : `${pricingStrategies.length} tabs`} with the optimal rate for each.
-                </div>
-              )}
             </Card>
 
             <Card title="Loan Programs">
@@ -757,6 +776,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     </div>
   );
 }
+
 
 
 
