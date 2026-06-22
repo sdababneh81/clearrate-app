@@ -1,1 +1,1 @@
-deploy
+supabase-406-fix-publishable-key
