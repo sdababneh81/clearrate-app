@@ -100,12 +100,12 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
   // Sync activeRateSheet from Supabase when it changes
   useEffect(() => {
     if (activeRateSheet) {
-      console.log('[App] Loading rate sheet from Supabase:', {
-        programs: activeRateSheet.programs?.length,
-        effective_date: activeRateSheet.effective_date,
-        first_program: activeRateSheet.programs?.[0],
-      });
+      console.log('[App] Rate sheet received from Supabase:', activeRateSheet.programs?.length, 'programs, effective:', activeRateSheet.effective_date);
       setParsedRateSheet(activeRateSheet);
+    } else if (onRateSheetUpdate) {
+      // No rate sheet passed in — trigger a reload from Supabase
+      console.log('[App] No rate sheet on mount, triggering reload...');
+      onRateSheetUpdate();
     }
   }, [activeRateSheet]);
 
