@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
-import { FileText, ChevronRight, ChevronLeft, CheckCircle, AlertCircle, Loader, Shield, TrendingDown, DollarSign, Calculator } from 'lucide-react';
+import { FileText, ChevronRight, ChevronLeft, CheckCircle, AlertCircle, Loader, Shield, TrendingDown, DollarSign, Calculator, Save, FolderOpen, Trash2, X, Pencil } from 'lucide-react';
 import DropZone from './components/DropZone';
 import DebtChecklist from './components/DebtChecklist';
 import AnalysisReport from './components/AnalysisReport';
 import { parseCreditReport, parseRateSheet } from './utils/claudeParser';
-import { getActiveRateSheet } from './lib/supabase.js';
+import { getActiveRateSheet, saveAnalysis, getSavedAnalyses, getSavedAnalysis, deleteSavedAnalysis } from './lib/supabase.js';
 import { analyzeDebt } from './utils/debtOptimizer';
 import { generateScenarios } from './utils/scenarioEngine';
 import { calcPI, reverseEngineerTerm } from './utils/mortgageCalc';
@@ -96,6 +96,14 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
   const [crmBadge, setCrmBadge] = useState('');
   const [pricingStrategies, setPricingStrategies] = useState(['lowest_rate', 'margin_cost', 'no_cost']);
   const [lenderFees, setLenderFees] = useState('');
+
+  // ─── Saved files (client analyses) ───────────────────────────
+  const [currentFileId, setCurrentFileId] = useState(null);   // id of the loaded/saved file
+  const [currentFileName, setCurrentFileName] = useState('');  // display name on screen
+  const [savedFiles, setSavedFiles] = useState([]);
+  const [showFiles, setShowFiles] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('idle');        // idle | saving | saved | error
+  const [filesLoading, setFilesLoading] = useState(false);
   const adminMargins = { fha: 0.5, conv: 0.5, va: 0.375 };
 
   const setP = (key, val) => setProfile(p => ({ ...p, [key]: val }));
@@ -364,6 +372,144 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     setIsVeteran(null); setSelectedPrograms(['Conventional','FHA']); setGoalType('rate_term');
     setMarginBPS(''); setMarginDollar(''); setYearsInHome(''); setMaxPointsPct('5');
     setCrmBadge(''); setLenderFees(''); setPricingStrategies(['lowest_rate', 'margin_cost', 'no_cost']);
+    setCurrentFileId(null); setCurrentFileName(''); setSaveStatus('idle');
+  };
+
+  // ─── Saved files: snapshot the full input state so a file is reproducible ──
+  const buildSnapshot = () => ({
+    version: 1,
+    profile,
+    debts,
+    isVeteran,
+    selectedPrograms,
+    goalType,
+    marginBPS,
+    marginDollar,
+    maxPointsPct,
+    yearsInHome,
+    lenderFees,
+    pricingStrategies,
+    // Snapshot the rate sheet used so the analysis can be reproduced even after
+    // the active sheet changes day-to-day.
+    rateSheet: parsedRateSheet,
+  });
+
+  const applySnapshot = (snap) => {
+    if (!snap) return;
+    if (snap.profile) setProfile(snap.profile);
+    if (snap.debts) setDebts(snap.debts);
+    setIsVeteran(snap.isVeteran ?? null);
+    if (snap.selectedPrograms) setSelectedPrograms(snap.selectedPrograms);
+    setGoalType(snap.goalType || 'rate_term');
+    setMarginBPS(snap.marginBPS ?? '');
+    setMarginDollar(snap.marginDollar ?? '');
+    setMaxPointsPct(snap.maxPointsPct ?? '5');
+    setYearsInHome(snap.yearsInHome ?? '');
+    setLenderFees(snap.lenderFees ?? '');
+    if (snap.pricingStrategies) setPricingStrategies(snap.pricingStrategies);
+    if (snap.rateSheet) { setParsedRateSheet(snap.rateSheet); setRateSheetStatus('success'); }
+  };
+
+  const loadSavedFiles = async () => {
+    if (!user?.id) return;
+    setFilesLoading(true);
+    try {
+      const files = await getSavedAnalyses(user.id);
+      setSavedFiles(files);
+    } catch (e) {
+      console.error('[Files] load list failed:', e);
+    }
+    setFilesLoading(false);
+  };
+
+  const handleOpenFiles = () => { setShowFiles(true); loadSavedFiles(); };
+
+  const handleSaveFile = async () => {
+    if (!user?.id) { setError('You must be signed in to save files.'); return; }
+    const name = (currentFileName || profile.borrowerName || 'Untitled').trim();
+    setSaveStatus('saving');
+    try {
+      const saved = await saveAnalysis({
+        id: currentFileId || undefined,
+        fileName: name,
+        borrowerName: profile.borrowerName || name,
+        snapshot: buildSnapshot(),
+        userId: user.id,
+      });
+      setCurrentFileId(saved.id);
+      setCurrentFileName(saved.file_name);
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2500);
+    } catch (e) {
+      console.error('[Files] save failed:', e);
+      setSaveStatus('error');
+      setError('Could not save file: ' + (e?.message || e));
+    }
+  };
+
+  const handleOpenFile = async (fileId, { edit = false } = {}) => {
+    setFilesLoading(true);
+    try {
+      const file = await getSavedAnalysis(fileId);
+      if (!file) throw new Error('File not found');
+      applySnapshot(file.snapshot);
+      setCurrentFileId(file.id);
+      setCurrentFileName(file.file_name);
+      setShowFiles(false);
+      setResult(null);
+      // Re-run the analysis from the snapshot so the report reflects saved inputs.
+      // edit=true drops the user on Step 1 to adjust; otherwise jump to analysis.
+      setStep(edit ? 1 : 4);
+      if (!edit) {
+        // Defer generation until state has applied
+        setTimeout(() => regenerateFromState(file.snapshot), 0);
+      }
+    } catch (e) {
+      console.error('[Files] open failed:', e);
+      setError('Could not open file: ' + (e?.message || e));
+    }
+    setFilesLoading(false);
+  };
+
+  // Generate scenarios directly from a snapshot (used when opening a saved file)
+  const regenerateFromState = (snap) => {
+    try {
+      const clientProfile = {
+        ...snap.profile,
+        currentBalance: parseFloat(snap.profile.currentBalance),
+        currentRate: parseFloat(snap.profile.currentRate),
+        escrow: parseFloat(snap.profile.escrow) || 0,
+        titleCharges: parseFloat(snap.profile.titleCharges) || 0,
+        lenderFees: parseFloat(snap.lenderFees) || 0,
+      };
+      const res = generateScenarios({
+        rateSheet: snap.rateSheet,
+        clientProfile,
+        selectedDebts: snap.debts || [],
+        isVeteran: snap.isVeteran,
+        goalType: snap.goalType,
+        selectedPrograms: snap.isVeteran ? snap.selectedPrograms : (snap.selectedPrograms || []).filter(p => p !== 'VA'),
+        marginBPS: parseFloat(snap.marginBPS) || 0,
+        marginDollar: parseFloat(snap.marginDollar) || 0,
+        yearsInHome: parseFloat(snap.yearsInHome) || null,
+        maxPointsPct: parseFloat(snap.maxPointsPct) ?? 5.0,
+        pricingStrategies: snap.pricingStrategies || ['lowest_rate', 'margin_cost', 'no_cost'],
+      });
+      setResult(res);
+    } catch (e) {
+      console.error('[Files] regenerate failed:', e);
+      setError('Could not rebuild analysis from saved file: ' + (e?.message || e));
+    }
+  };
+
+  const handleDeleteFile = async (fileId) => {
+    try {
+      await deleteSavedAnalysis(fileId);
+      setSavedFiles(prev => prev.filter(f => f.id !== fileId));
+      if (currentFileId === fileId) { setCurrentFileId(null); setCurrentFileName(''); }
+    } catch (e) {
+      console.error('[Files] delete failed:', e);
+    }
   };
 
   return (
@@ -391,6 +537,11 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                 ⚙️ Admin
               </button>
             )}
+            {!isIframe && (
+              <button onClick={handleOpenFiles} className="flex items-center gap-1.5 bg-blue-500/20 border border-blue-400/30 hover:bg-blue-500/30 rounded-lg px-3 py-1.5 text-xs text-blue-200 transition-colors font-semibold">
+                <FolderOpen className="w-3.5 h-3.5" /> My Files
+              </button>
+            )}
             {onSignOut && !isIframe && (
               <button onClick={onSignOut} className="text-blue-400 hover:text-white text-xs transition-colors">
                 Sign Out
@@ -401,6 +552,26 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-8">
+        {/* Current file name banner */}
+        {currentFileName && (
+          <div className="mb-4 flex items-center justify-between bg-white border border-blue-200 rounded-xl px-4 py-2.5 shadow-sm">
+            <div className="flex items-center gap-2 min-w-0">
+              <FileText className="w-4 h-4 text-blue-500 flex-shrink-0" />
+              <span className="text-sm text-gray-500">File:</span>
+              <input
+                value={currentFileName}
+                onChange={e => setCurrentFileName(e.target.value)}
+                className="text-sm font-semibold text-gray-900 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none min-w-0 flex-1"
+              />
+            </div>
+            <button onClick={handleSaveFile} disabled={saveStatus === 'saving'}
+              className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800 flex-shrink-0 ml-3">
+              <Save className="w-3.5 h-3.5" />
+              {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? 'Saved ✓' : 'Save'}
+            </button>
+          </div>
+        )}
+
         <StepIndicator current={step} />
 
         {error && step >= 3 && (
@@ -776,12 +947,73 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
             </button>
           )}
           {step === 4 && (
-            <button onClick={handleReset} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors">
-              New Analysis
-            </button>
+            <div className="flex items-center gap-2">
+              <button onClick={handleSaveFile} disabled={saveStatus === 'saving'}
+                className="flex items-center gap-2 px-5 py-2.5 bg-white border border-blue-300 text-blue-700 rounded-xl text-sm font-semibold hover:bg-blue-50 transition-colors disabled:opacity-50">
+                <Save className="w-4 h-4" />
+                {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? 'Saved ✓' : currentFileId ? 'Update File' : 'Save File'}
+              </button>
+              <button onClick={handleReset} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors">
+                New Analysis
+              </button>
+            </div>
           )}
         </div>
       </main>
+
+      {/* ─── My Files modal ─── */}
+      {showFiles && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-20" onClick={() => setShowFiles(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[70vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <div className="flex items-center gap-2">
+                <FolderOpen className="w-5 h-5 text-blue-600" />
+                <h2 className="font-bold text-gray-900">My Saved Files</h2>
+              </div>
+              <button onClick={() => setShowFiles(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-3">
+              {filesLoading ? (
+                <div className="py-12 text-center text-gray-400 text-sm flex items-center justify-center gap-2">
+                  <Loader className="w-4 h-4 animate-spin" /> Loading files…
+                </div>
+              ) : savedFiles.length === 0 ? (
+                <div className="py-12 text-center text-gray-400 text-sm">
+                  No saved files yet. Run an analysis and click <span className="font-semibold">Save File</span> to keep it here.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {savedFiles.map(f => (
+                    <div key={f.id} className="flex items-center gap-3 border border-gray-200 rounded-xl px-4 py-3 hover:border-blue-300 hover:bg-blue-50/30 transition-colors">
+                      <FileText className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-sm text-gray-900 truncate">{f.file_name}</div>
+                        <div className="text-xs text-gray-400">
+                          {f.borrower_name} · updated {new Date(f.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </div>
+                      </div>
+                      <button onClick={() => handleOpenFile(f.id, { edit: false })}
+                        className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800 px-2 py-1">
+                        <FolderOpen className="w-3.5 h-3.5" /> Open
+                      </button>
+                      <button onClick={() => handleOpenFile(f.id, { edit: true })}
+                        className="flex items-center gap-1 text-xs font-semibold text-gray-600 hover:text-gray-800 px-2 py-1">
+                        <Pencil className="w-3.5 h-3.5" /> Edit
+                      </button>
+                      <button onClick={() => { if (confirm('Delete this file?')) handleDeleteFile(f.id); }}
+                        className="text-gray-300 hover:text-red-500 px-1">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
