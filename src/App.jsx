@@ -4,6 +4,7 @@ import DropZone from './components/DropZone';
 import DebtChecklist from './components/DebtChecklist';
 import AnalysisReport from './components/AnalysisReport';
 import { parseCreditReport, parseRateSheet } from './utils/claudeParser';
+import { getActiveRateSheet } from './lib/supabase.js';
 import { analyzeDebt } from './utils/debtOptimizer';
 import { generateScenarios } from './utils/scenarioEngine';
 import { calcPI, reverseEngineerTerm } from './utils/mortgageCalc';
@@ -68,7 +69,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
   const [parsedCredit, setParsedCredit] = useState(null);
   // Rate sheet now comes from Supabase (admin uploads once, all LOs get it)
   const [parsedRateSheet, setParsedRateSheet] = useState(activeRateSheet || null);
-  const rateSheetStatus = activeRateSheet ? 'success' : 'idle';
+  const rateSheetStatus = parsedRateSheet ? 'success' : 'idle';
 
   const [profile, setProfile] = useState({
     borrowerName: '', ficoScore: '', estimatedValue: '',
@@ -99,17 +100,31 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
   const setP = (key, val) => setProfile(p => ({ ...p, [key]: val }));
 
-  // Sync activeRateSheet from Supabase when it changes
+  // Fetch rate sheet directly from Supabase on mount — don't rely on prop timing
   useEffect(() => {
-    if (activeRateSheet) {
-      console.log('[App] Rate sheet received from Supabase:', activeRateSheet.programs?.length, 'programs, effective:', activeRateSheet.effective_date);
-      setParsedRateSheet(activeRateSheet);
-    } else if (onRateSheetUpdate) {
-      // No rate sheet passed in — trigger a reload from Supabase
-      console.log('[App] No rate sheet on mount, triggering reload...');
-      onRateSheetUpdate();
-    }
-  }, [activeRateSheet]);
+    const loadSheet = async () => {
+      try {
+        // Use prop if already loaded, otherwise fetch directly
+        if (activeRateSheet?.programs?.length) {
+          console.log('[App] Rate sheet from prop:', activeRateSheet.programs.length, 'programs');
+          setParsedRateSheet(activeRateSheet);
+          return;
+        }
+        console.log('[App] Fetching rate sheet directly from Supabase...');
+        const sheet = await getActiveRateSheet();
+        if (sheet?.programs?.length) {
+          console.log('[App] Rate sheet fetched:', sheet.programs.length, 'programs, effective:', sheet.effective_date);
+          setParsedRateSheet(sheet);
+          if (onRateSheetUpdate) onRateSheetUpdate(sheet);
+        } else {
+          console.log('[App] No active rate sheet found in Supabase');
+        }
+      } catch (e) {
+        console.error('[App] Rate sheet fetch error:', e.message);
+      }
+    };
+    loadSheet();
+  }, []);
 
   // Pre-populate from CRM session if provided
   useEffect(() => {
@@ -729,6 +744,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     </div>
   );
 }
+
 
 
 
