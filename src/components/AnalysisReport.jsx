@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Star, TrendingDown, Clock, DollarSign, CheckCircle, AlertCircle } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Star, TrendingDown, Clock, DollarSign, CheckCircle, AlertCircle, Printer } from 'lucide-react';
 
 const money = v => '$' + Math.round(Math.abs(v || 0)).toLocaleString();
 const pct = v => parseFloat(v).toFixed(3) + '%';
@@ -17,7 +17,6 @@ function SummaryCell({ label, value, sub, highlight }) {
 function ScenarioCard({ scenario: sc, isRecommended, isSelected, onSelect }) {
   const recoupOk = !sc.breakevenMonths || sc.breakevenMonths <= 24;
   const recoupWarn = sc.breakevenMonths > 24 && sc.breakevenMonths <= 36;
-  const recoupBad = sc.breakevenMonths > 36;
 
   return (
     <div
@@ -28,130 +27,72 @@ function ScenarioCard({ scenario: sc, isRecommended, isSelected, onSelect }) {
     >
       {isRecommended && (
         <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-500 text-white text-xs font-bold px-3 py-0.5 rounded-full flex items-center gap-1">
-          <Star className="w-3 h-3" /> RECOMMENDED
+          <Star className="w-3 h-3" /> AI RECOMMENDED
         </div>
       )}
 
-      {/* Header */}
       <div className="flex items-start justify-between mb-3">
         <div>
           <div className="font-bold text-sm text-blue-800">{sc.program} {sc.isARM ? sc.armType || 'ARM' : '30yr Fixed'}</div>
-          <div className="text-xs text-gray-500 mt-0.5">{sc.optionLabel}</div>
+          {sc.strategyLabel && <div className="text-xs text-gray-400 mt-0.5">{sc.strategyLabel}</div>}
         </div>
         <div className="text-right">
           <div className="text-2xl font-bold text-gray-900">{pct(sc.rate)}</div>
-          <div className="text-xs text-gray-500">
-            {sc.borrowerPaysPct > 0 ? `+${sc.borrowerPaysPct?.toFixed(3)} pts` : sc.lenderCreditPct > 0 ? `${sc.lenderCreditPct?.toFixed(3)} credit` : 'Par'}
+          <div className={`text-xs font-semibold mt-0.5 ${sc.borrowerPaysPct > 0 ? 'text-amber-600' : sc.lenderCreditPct > 0 ? 'text-green-600' : 'text-gray-400'}`}>
+            {sc.borrowerPaysPct > 0 ? `+${sc.borrowerPaysPct?.toFixed(3)}% pts` : sc.lenderCreditPct > 0 ? `-${sc.lenderCreditPct?.toFixed(3)}% credit` : 'Par'}
           </div>
         </div>
       </div>
 
-      {/* Payment Breakdown */}
-      <div className="grid grid-cols-3 gap-1.5 mb-2">
-        <div className="bg-white rounded-lg p-1.5 text-center border border-gray-100">
-          <div className="text-xs text-gray-400">P&I</div>
-          <div className="font-bold text-blue-700 text-xs">{money(sc.newPI)}</div>
+      {/* Points charged to client — prominent */}
+      {sc.borrowerPaysPct > 0 && (
+        <div className="mb-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 flex items-center justify-between">
+          <span className="text-xs font-semibold text-amber-700">Discount Points</span>
+          <span className="text-xs font-bold text-amber-800">{money(sc.pointsCost)} ({sc.borrowerPaysPct?.toFixed(3)}%)</span>
         </div>
-        <div className="bg-white rounded-lg p-1.5 text-center border border-gray-100">
-          <div className="text-xs text-gray-400">Escrow</div>
-          <div className="font-bold text-gray-600 text-xs">{sc.newEscrow > 0 ? money(sc.newEscrow) : '—'}</div>
-        </div>
-        <div className="bg-blue-50 rounded-lg p-1.5 text-center border border-blue-100">
-          <div className="text-xs text-gray-400">Total</div>
-          <div className="font-bold text-blue-800 text-xs">{money(sc.newTotalPayment)}</div>
-        </div>
-      </div>
-      {/* Monthly savings */}
-      <div className={`rounded-lg p-2 text-center border mb-2 ${sc.monthlySavings > 0 ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
-        <div className="text-xs text-gray-500">Monthly savings vs today</div>
-        <div className={`font-bold text-sm ${sc.monthlySavings > 0 ? 'text-green-700' : 'text-red-700'}`}>
-          {sc.monthlySavings > 0 ? '+' : ''}{money(sc.monthlySavings)}/mo
-        </div>
-      </div>
-
-      {/* Recoupment + Closing Costs */}
-      {(() => {
-        const horizon = sc.yearsInHome ? sc.yearsInHome * 12 : null;
-        const wontRecoup = horizon && sc.breakevenMonths > 0 && sc.breakevenMonths > horizon;
-        const recoupColor = wontRecoup ? 'bg-red-50 border-red-200' : recoupOk ? 'bg-green-50 border-green-200' : recoupWarn ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200';
-        const recoupTextColor = wontRecoup ? 'text-red-700' : recoupOk ? 'text-green-700' : recoupWarn ? 'text-amber-700' : 'text-red-700';
-        const clockColor = wontRecoup ? 'text-red-500' : recoupOk ? 'text-green-600' : recoupWarn ? 'text-amber-600' : 'text-red-600';
-        return (
-          <div className={`rounded-lg px-3 py-2 flex items-center justify-between text-xs border ${recoupColor}`}>
-            <div className="flex items-center gap-1.5">
-              <Clock className={`w-3 h-3 ${clockColor}`} />
-              <span className={`font-semibold ${recoupTextColor}`}>
-                {sc.breakevenMonths === 0 ? 'No cost' : wontRecoup ? `⚠️ ${sc.breakevenMonths}mo — won't recoup` : `${sc.breakevenMonths}mo recoup`}
-              </span>
-            </div>
-            <span className="text-gray-600">Closing: {money(sc.netClosingCosts)}</span>
-          </div>
-        );
-      })()}
-      {/* Horizon savings */}
-      {sc.yearsInHome && (
-        <div className="mt-1.5 rounded-lg px-3 py-1.5 bg-blue-50 border border-blue-100 text-xs flex justify-between">
-          <span className="text-blue-600">Net savings in {sc.yearsInHome} yrs</span>
-          <span className={`font-bold ${sc.horizonNet >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
-            {sc.horizonNet >= 0 ? '+' : ''}{money(sc.horizonNet)}
-          </span>
+      )}
+      {sc.lenderCreditPct > 0 && (
+        <div className="mb-2 bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 flex items-center justify-between">
+          <span className="text-xs font-semibold text-green-700">Lender Credit</span>
+          <span className="text-xs font-bold text-green-800">-{money(sc.lenderCredit)} (-{sc.lenderCreditPct?.toFixed(3)}%)</span>
         </div>
       )}
 
-      {/* Points / Credits detail */}
-      {(sc.borrowerPaysPct > 0 || sc.lenderCreditPct > 0) && (
-        <div className="mt-2 text-xs text-center text-gray-400">
-          {sc.borrowerPaysPct > 0 && `Borrower pays ${money(sc.pointsCost)} in points`}
-          {sc.lenderCreditPct > 0 && `Lender credit: ${money(sc.lenderCredit)}`}
+      <div className="grid grid-cols-3 gap-1.5 mb-2">
+        <div className="text-center bg-white rounded-lg p-2 border border-gray-100">
+          <div className="text-xs text-gray-400">New P&I</div>
+          <div className="font-bold text-gray-900 text-sm">{money(sc.newPI)}</div>
         </div>
+        <div className="text-center bg-green-50 rounded-lg p-2 border border-green-100">
+          <div className="text-xs text-gray-400">Saves/mo</div>
+          <div className={`font-bold text-sm ${sc.monthlySavings > 0 ? 'text-green-700' : 'text-red-600'}`}>{sc.monthlySavings > 0 ? '+' : ''}{money(sc.monthlySavings)}</div>
+        </div>
+        <div className="text-center bg-white rounded-lg p-2 border border-gray-100">
+          <div className="text-xs text-gray-400">Recoup</div>
+          <div className={`font-bold text-sm ${recoupOk ? 'text-green-700' : recoupWarn ? 'text-amber-600' : 'text-red-600'}`}>
+            {sc.breakevenMonths === 0 ? 'Immed.' : `${sc.breakevenMonths}mo`}
+          </div>
+        </div>
+      </div>
+
+      {/* Efficiency tag */}
+      {sc.efficiencyLabel && (
+        <div className="text-xs text-center py-1 rounded-lg bg-gray-50 border border-gray-100 text-gray-600">{sc.efficiencyLabel}</div>
       )}
     </div>
   );
 }
 
-// Bottom summary bar shown on every scenario
 function LoanSummaryBar({ scenario: s, clientProfile }) {
-  const estValue = parseFloat(clientProfile.estimatedValue) || 0;
   const cashInHand = s.cashOut > 0 ? Math.max(0, s.cashOut - s.netClosingCosts) : 0;
-
   return (
-    <div className="bg-[#0f2d5e] text-white rounded-2xl p-4">
-      <div className="text-xs font-bold uppercase tracking-wider text-blue-300 mb-3">Loan Summary</div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
-        <div className="bg-white/10 rounded-lg p-2.5">
-          <div className="text-blue-300 text-xs mb-1">Current Balance</div>
-          <div className="font-bold">{money(s.currentBalance || clientProfile.currentBalance)}</div>
-        </div>
-        <div className="bg-white/10 rounded-lg p-2.5">
-          <div className="text-blue-300 text-xs mb-1">Debts Paid Off</div>
-          <div className="font-bold">{money(s.debtBalanceTotal)}</div>
-        </div>
-        <div className="bg-white/10 rounded-lg p-2.5">
-          <div className="text-blue-300 text-xs mb-1">Final Loan Amount</div>
-          <div className="font-bold text-yellow-300">{money(s.newLoanAmount)}</div>
-        </div>
-        <div className="bg-white/10 rounded-lg p-2.5">
-          <div className="text-blue-300 text-xs mb-1">Cash to Client</div>
-          <div className={`font-bold ${cashInHand > 0 ? 'text-green-300' : 'text-gray-300'}`}>
-            {cashInHand > 0 ? money(cashInHand) : '—'}
-          </div>
-        </div>
-        <div className={`rounded-lg p-2.5 ${!s.breakevenMonths || s.breakevenMonths <= 24 ? 'bg-green-600/40' : s.breakevenMonths <= 36 ? 'bg-amber-600/40' : 'bg-red-600/40'}`}>
-          <div className="text-blue-300 text-xs mb-1">Recoupment</div>
-          <div className="font-bold">{s.breakevenMonths === 0 ? 'Immediate' : `${s.breakevenMonths} months`}</div>
-        </div>
-        <div className="bg-white/10 rounded-lg p-2.5">
-          <div className="text-blue-300 text-xs mb-1">Total Closing Costs</div>
-          <div className="font-bold">{money(s.netClosingCosts)}</div>
-          {s.borrowerPaysPct > 0 && <div className="text-yellow-300 text-xs">incl. {s.borrowerPaysPct?.toFixed(2)}% pts</div>}
-          {s.lenderCreditPct > 0 && <div className="text-green-300 text-xs">-{s.lenderCreditPct?.toFixed(2)}% credit</div>}
-        </div>
-      </div>
-      {estValue > 0 && (
-        <div className="mt-2 text-xs text-blue-400 text-right">
-          LTV: {((s.newLoanAmount / estValue) * 100).toFixed(1)}% of {money(estValue)} estimated value
-        </div>
-      )}
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 border-b border-gray-200">
+      <SummaryCell label="Current Balance" value={money(s.currentBalance || clientProfile.currentBalance)} />
+      <SummaryCell label="Debts Paid Off" value={money(s.debtBalanceTotal)} />
+      <SummaryCell label="Final Loan Amount" value={money(s.newLoanAmount)} highlight />
+      {s.cashOut > 0 && <SummaryCell label="Cash to Client" value={`~${money(cashInHand)}`} highlight />}
+      <SummaryCell label="Recoupment" value={s.breakevenMonths === 0 ? 'Immediate' : `${s.breakevenMonths} months`} highlight={s.breakevenMonths <= 24} />
+      <SummaryCell label="Total Closing Costs" value={money(s.netClosingCosts)} />
     </div>
   );
 }
@@ -159,10 +100,11 @@ function LoanSummaryBar({ scenario: s, clientProfile }) {
 export default function AnalysisReport({ result, clientProfile, selectedDebts, marginBPS, marginDollar, lenderFees = 0, pricingStrategies = [], companyName = 'Priority 1 Lending' }) {
   const [activeScenario, setActiveScenario] = useState(result.recommended);
   const [activeGoalTab, setActiveGoalTab] = useState('rate_term');
-  const [productTab, setProductTab] = useState('fixed'); // 'fixed' | 'arm'
+  const [productTab, setProductTab] = useState('fixed');
   const [activeStrategy, setActiveStrategy] = useState(
     result.strategyResults?.length ? result.strategyResults[0].strategy : null
   );
+  const printRef = useRef(null);
 
   const { scenarios, recommended, currentTotalPayment, currentMortgagePI, debtPaymentTotal, remainingPayments, lowRateWarning, currentRate: resultCurrentRate } = result;
 
@@ -176,15 +118,68 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
   const paidDebts = selectedDebts.filter(d => d.selected);
   const remainingDebts = selectedDebts.filter(d => !d.selected);
 
-  // Strategy-aware scenario filtering
   const strategyResults = result.strategyResults || [];
   const activeStrategyResult = strategyResults.find(r => r.strategy === activeStrategy) || strategyResults[0];
   const strategyScenarios = activeStrategyResult?.scenarios || scenarios;
 
-  const goalTabs = [...new Set(strategyScenarios.map(s => s.goal))];
-  const visibleScenarios = strategyScenarios.filter(s => s.goal === activeGoalTab);
+  const goalTabs = [...new Set(strategyScenarios.map(sc => sc.goal))];
+  const visibleScenarios = strategyScenarios.filter(sc => sc.goal === activeGoalTab);
   const fixedScenarios = visibleScenarios.filter(sc => !sc.isARM);
   const armScenarios = visibleScenarios.filter(sc => sc.isARM);
+
+  const handlePrint = () => {
+    const printContent = printRef.current;
+    if (!printContent) return;
+    const w = window.open('', '_blank');
+    w.document.write(`
+      <html><head>
+        <title>ClearRate — Refinance Analysis</title>
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 11px; color: #1a1a2e; padding: 20px; }
+          .print-header { background: #0f2d5e; color: white; padding: 16px 20px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+          .print-header h1 { font-size: 20px; font-weight: 800; }
+          .print-header .sub { font-size: 11px; color: #93c5fd; margin-top: 2px; }
+          .section { background: white; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+          .section-header { background: #f8fafc; padding: 8px 14px; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; border-bottom: 1px solid #e5e7eb; }
+          .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+          .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+          .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+          .cell { padding: 10px 14px; }
+          .cell-label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #9ca3af; margin-bottom: 2px; }
+          .cell-value { font-size: 18px; font-weight: 800; color: #111827; }
+          .cell-sub { font-size: 9px; color: #6b7280; margin-top: 2px; }
+          .highlight { color: #16a34a !important; }
+          .big-savings { font-size: 28px !important; color: #16a34a !important; }
+          table { width: 100%; border-collapse: collapse; font-size: 10px; }
+          th { background: #f8fafc; padding: 6px 10px; text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; color: #6b7280; border-bottom: 1px solid #e5e7eb; }
+          td { padding: 6px 10px; border-bottom: 1px solid #f3f4f6; }
+          .row-total { font-weight: 700; background: #f0fdf4; }
+          .text-right { text-align: right; }
+          .green { color: #16a34a; font-weight: 700; }
+          .amber { color: #d97706; font-weight: 700; }
+          .red { color: #dc2626; font-weight: 700; }
+          .blue { color: #2563eb; font-weight: 700; }
+          .disclaimer { font-size: 9px; color: #9ca3af; margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 10px; }
+          @media print { body { padding: 10px; } .no-print { display: none; } }
+          .rate-big { font-size: 32px; font-weight: 900; color: #2563eb; }
+          .tag { display: inline-block; font-size: 9px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+          .tag-green { background: #dcfce7; color: #16a34a; }
+          .tag-amber { background: #fef3c7; color: #d97706; }
+          .tag-blue { background: #dbeafe; color: #2563eb; }
+          .divider { border: none; border-top: 1px solid #e5e7eb; margin: 10px 0; }
+          .summary-bar { display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 1px solid #e5e7eb; }
+          .summary-bar .cell { border-right: 1px solid #e5e7eb; }
+          .summary-bar .cell:last-child { border-right: none; }
+        </style>
+      </head><body>
+    `);
+    w.document.write(printContent.innerHTML);
+    w.document.write('<div class="disclaimer">This analysis is for illustrative purposes only and is prepared by ' + companyName + '. Final loan terms are subject to underwriting approval, appraisal, and lender guidelines. Not a commitment to lend. NMLS regulated.</div>');
+    w.document.write('</body></html>');
+    w.document.close();
+    setTimeout(() => { w.print(); }, 500);
+  };
 
   const s = activeScenario || result.recommended;
   if (!s) return (
@@ -197,21 +192,9 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
               <div className="font-bold text-amber-900 text-base mb-1">Low Rate Borrower — Refi Requires Justification</div>
               <div className="text-amber-800 text-sm leading-relaxed">{lowRateWarning}</div>
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                <div className="bg-white rounded-lg p-2.5 border border-amber-200">
-                  <div className="font-semibold text-amber-700 mb-1">Current Rate</div>
-                  <div className="text-2xl font-bold text-amber-900">{resultCurrentRate}%</div>
-                  <div className="text-amber-600">Today's market: 6–7.5%</div>
-                </div>
-                <div className="bg-white rounded-lg p-2.5 border border-amber-200">
-                  <div className="font-semibold text-amber-700 mb-1">Best Path Forward</div>
-                  <div className="font-bold text-amber-900">Debt Consolidation</div>
-                  <div className="text-amber-600">Freed payments offset higher rate</div>
-                </div>
-                <div className="bg-white rounded-lg p-2.5 border border-amber-200">
-                  <div className="font-semibold text-amber-700 mb-1">Or Consider</div>
-                  <div className="font-bold text-amber-900">Cash-Out + Debts</div>
-                  <div className="text-amber-600">Go back to Step 3 and select debts</div>
-                </div>
+                <div className="bg-white rounded-lg p-2.5 border border-amber-200"><div className="font-semibold text-amber-700 mb-1">Current Rate</div><div className="text-2xl font-bold text-amber-900">{resultCurrentRate}%</div><div className="text-amber-600">Today's market: 6–7.5%</div></div>
+                <div className="bg-white rounded-lg p-2.5 border border-amber-200"><div className="font-semibold text-amber-700 mb-1">Best Path Forward</div><div className="font-bold text-amber-900">Debt Consolidation</div><div className="text-amber-600">Freed payments offset higher rate</div></div>
+                <div className="bg-white rounded-lg p-2.5 border border-amber-200"><div className="font-semibold text-amber-700 mb-1">Or Consider</div><div className="font-bold text-amber-900">Cash-Out + Debts</div><div className="text-amber-600">Go back to Step 3 and select debts</div></div>
               </div>
             </div>
           </div>
@@ -219,7 +202,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
       ) : (
         <div className="bg-red-50 border border-red-200 rounded-2xl p-5 text-center">
           <div className="text-red-500 font-semibold mb-1">No scenarios could be generated</div>
-          <div className="text-red-400 text-sm">Check that a rate sheet is uploaded, loan type is set, and borrower profile is complete.</div>
+          <div className="text-red-400 text-sm">Check that a rate sheet is uploaded and borrower profile is complete.</div>
         </div>
       )}
     </div>
@@ -227,12 +210,20 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
 
   const netCashOut = s.cashOut > 0 ? Math.max(0, s.cashOut - (s.netClosingCosts || 0)) : 0;
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-
-  const isCardSelected = (sc) => s === sc || (s.program === sc.program && s.optionLabel === sc.optionLabel && s.goal === sc.goal && s.isARM === sc.isARM);
-  const isCardRecommended = (sc) => sc === recommended || (sc.program === recommended?.program && sc.optionLabel === recommended?.optionLabel && sc.goal === recommended?.goal && sc.isARM === recommended?.isARM);
+  const isCardSelected = (sc) => s === sc || (s.program === sc.program && s.goal === sc.goal && s.isARM === sc.isARM && s.rate === sc.rate);
+  const isCardRecommended = (sc) => sc === recommended || (sc.program === recommended?.program && sc.goal === recommended?.goal && sc.isARM === recommended?.isARM && sc.rate === recommended?.rate);
 
   return (
     <div className="space-y-5">
+
+      {/* Print button */}
+      <div className="flex justify-end">
+        <button onClick={handlePrint}
+          className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm">
+          <Printer className="w-4 h-4" />
+          Print / Save PDF
+        </button>
+      </div>
 
       {/* Goal tabs */}
       {goalTabs.length > 1 && (
@@ -246,33 +237,36 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
         </div>
       )}
 
-      {/* Strategy tabs */}
-      {strategyResults.length > 1 && (
+      {/* Strategy tabs — always show when strategies selected */}
+      {strategyResults.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
-          <div className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Pricing Strategy</div>
+          <div className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Pricing Strategy — Select to Compare</div>
           <div className="flex flex-wrap gap-2">
             {strategyResults.map(sr => {
               const meta = STRATEGY_META[sr.strategy] || {};
               const isActive = activeStrategy === sr.strategy;
               const rec = sr.recommended;
+              const colorMap = { blue: 'border-blue-500 bg-blue-50', purple: 'border-purple-500 bg-purple-50', green: 'border-green-500 bg-green-50', amber: 'border-amber-500 bg-amber-50' };
+              const activeColor = colorMap[meta.color] || 'border-blue-500 bg-blue-50';
               return (
-                <button key={sr.strategy} onClick={() => { setActiveStrategy(sr.strategy); setActiveScenario(sr.recommended); }}
-                  className={`flex-1 min-w-[140px] text-left p-3 rounded-xl border-2 transition-all ${isActive ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300 bg-white'}`}>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-lg">{meta.icon}</span>
-                    <span className={`text-xs font-bold ${isActive ? 'text-blue-700' : 'text-gray-600'}`}>{meta.label}</span>
-                    {isActive && <span className="ml-auto text-blue-500 text-xs">●</span>}
+                <button key={sr.strategy}
+                  onClick={() => { setActiveStrategy(sr.strategy); setActiveScenario(sr.recommended); }}
+                  className={`flex-1 min-w-[160px] text-left p-3 rounded-xl border-2 transition-all ${isActive ? activeColor : 'border-gray-200 hover:border-gray-300 bg-white'}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xl">{meta.icon}</span>
+                    <span className={`text-xs font-bold ${isActive ? 'text-gray-800' : 'text-gray-500'}`}>{meta.label}</span>
+                    {isActive && <span className="ml-auto w-2 h-2 rounded-full bg-blue-500"></span>}
                   </div>
-                  {rec && (
+                  {rec ? (
                     <>
-                      <div className="text-base font-bold text-gray-900">{rec.rate?.toFixed(3)}%</div>
-                      <div className="text-xs text-gray-500 mt-0.5">
-                        {rec.lenderCreditPct > 0 ? `${rec.lenderCreditPct.toFixed(3)}% credit` : rec.borrowerPaysPct > 0 ? `${rec.borrowerPaysPct.toFixed(3)}% pts` : 'Par'}
-                        {rec.monthlySavings > 0 ? ` · saves $${rec.monthlySavings}/mo` : ''}
+                      <div className="text-lg font-black text-gray-900">{rec.rate?.toFixed(3)}%</div>
+                      <div className={`text-xs font-semibold mt-0.5 ${rec.lenderCreditPct > 0 ? 'text-green-600' : rec.borrowerPaysPct > 0 ? 'text-amber-600' : 'text-gray-400'}`}>
+                        {rec.lenderCreditPct > 0 ? `-${rec.lenderCreditPct.toFixed(3)}% credit (${money(rec.lenderCredit)})` : rec.borrowerPaysPct > 0 ? `+${rec.borrowerPaysPct.toFixed(3)}% pts (${money(rec.pointsCost)})` : 'Par — no cost'}
                       </div>
-                      {rec.efficiencyLabel && <div className="text-xs mt-1">{rec.efficiencyLabel}</div>}
+                      {rec.monthlySavings > 0 && <div className="text-xs text-gray-500 mt-1">Saves ${rec.monthlySavings}/mo</div>}
+                      {rec.efficiencyLabel && <div className="text-xs mt-1 text-gray-500">{rec.efficiencyLabel}</div>}
                     </>
-                  )}
+                  ) : <div className="text-xs text-gray-400">No rate found</div>}
                 </button>
               );
             })}
@@ -280,153 +274,148 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
         </div>
       )}
 
-      {/* Fixed / ARM toggle tabs */}
-      <div className="bg-gray-100 rounded-xl p-1 flex gap-1 w-fit">
-        <button
-          onClick={() => setProductTab('fixed')}
-          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${productTab === 'fixed' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
-          📋 30-Year Fixed {fixedScenarios.length > 0 && <span className="ml-1 bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full">{fixedScenarios.length}</span>}
-        </button>
-        <button
-          onClick={() => setProductTab('arm')}
-          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${productTab === 'arm' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
-          📈 ARM Options {armScenarios.length > 0 && <span className="ml-1 bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full">{armScenarios.length}</span>}
-        </button>
-      </div>
-
       {/* Scenario cards */}
       <div>
+        {/* Fixed/ARM toggle */}
+        <div className="bg-gray-100 rounded-xl p-1 flex gap-1 w-fit mb-4">
+          <button onClick={() => setProductTab('fixed')}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${productTab === 'fixed' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+            📋 30-Year Fixed {fixedScenarios.length > 0 && <span className="ml-1 bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full">{fixedScenarios.length}</span>}
+          </button>
+          <button onClick={() => setProductTab('arm')}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${productTab === 'arm' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+            📈 ARM Options {armScenarios.length > 0 && <span className="ml-1 bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full">{armScenarios.length}</span>}
+          </button>
+        </div>
+
         {productTab === 'fixed' && (
-          fixedScenarios.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {fixedScenarios.map((sc, i) => (
-                <ScenarioCard key={i} scenario={sc} isRecommended={isCardRecommended(sc)} isSelected={isCardSelected(sc)} onSelect={setActiveScenario} />
-              ))}
-            </div>
-          ) : (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 text-center">
-              <div className="text-amber-700 font-semibold mb-1">
-                {lowRateWarning ? '📉 No beneficial fixed rates found' : 'No 30-year fixed options available'}
+          fixedScenarios.length > 0
+            ? <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {fixedScenarios.map((sc, i) => <ScenarioCard key={i} scenario={sc} isRecommended={isCardRecommended(sc)} isSelected={isCardSelected(sc)} onSelect={setActiveScenario} />)}
               </div>
-              <div className="text-amber-600 text-sm">
-                {lowRateWarning
-                  ? `Borrower's current ${resultCurrentRate}% rate is below today's market. Add debts to pay off or cash-out to offset the payment increase.`
-                  : 'Upload a rate sheet to enable automatic pricing.'}
-              </div>
-            </div>
-          )
+            : <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-amber-700 text-sm text-center">No 30-year fixed options available for this strategy. Try another strategy tab above or check ARM options.</div>
         )}
         {productTab === 'arm' && (
-          armScenarios.length > 0 ? (
-            <div>
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs text-amber-800">
-                ⚠️ ARM rates are fixed for the initial period then adjust every 6 months based on SOFR index + margin. Best for clients who plan to sell or refinance before the fixed period ends.
+          armScenarios.length > 0
+            ? <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {armScenarios.map((sc, i) => <ScenarioCard key={i} scenario={sc} isRecommended={isCardRecommended(sc)} isSelected={isCardSelected(sc)} onSelect={setActiveScenario} />)}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {armScenarios.map((sc, i) => (
-                  <ScenarioCard key={i} scenario={sc} isRecommended={isCardRecommended(sc)} isSelected={isCardSelected(sc)} onSelect={setActiveScenario} />
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="bg-gray-50 border border-gray-200 rounded-xl p-6 text-center text-gray-400">
-              No ARM options parsed from rate sheet. Rate sheet may not include ARM pricing.
-            </div>
-          )
+            : <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-400 text-sm text-center">No ARM options available.</div>
         )}
       </div>
 
-      {/* Loan Summary Bar — always visible */}
-      <LoanSummaryBar scenario={s} clientProfile={clientProfile} />
+      {/* ── PRINTABLE LOAN SUMMARY ── */}
+      <div ref={printRef} id="clearrate-print">
 
-      {/* Full analysis report */}
-      <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+        {/* Print Header — hidden on screen via CSS, shown on print */}
+        <div className="hidden print:block mb-4 p-4 bg-[#0f2d5e] text-white rounded-xl">
+          <div className="flex justify-between items-center">
+            <div>
+              <div className="text-xl font-black">ClearRate — Refinance Analysis</div>
+              <div className="text-blue-300 text-xs mt-1">{companyName} · {today}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-blue-300 text-xs">Prepared for</div>
+              <div className="font-bold">{clientProfile.borrowerName}</div>
+            </div>
+          </div>
+        </div>
 
-        {/* Report header */}
-        <div className="bg-[#0f2d5e] text-white p-5 flex items-center justify-between">
-          <div>
-            <div className="text-xs font-bold uppercase tracking-widest text-blue-300 mb-1">{companyName} | Refinance Savings Analysis</div>
-            <div className="text-base font-bold">Prepared for: {clientProfile.borrowerName || 'Client'}</div>
-            {s.yearsInHome && (
-              <div className="text-blue-300 text-xs mt-0.5">
-                🏠 {s.yearsInHome}-yr horizon · Net savings before sale: {s.horizonNet >= 0 ? '+' : ''}{money(s.horizonNet || 0)}
+        {/* Loan Summary Header — visible on screen too */}
+        <div className="bg-[#0f2d5e] text-white rounded-2xl overflow-hidden shadow-lg">
+          <div className="px-5 pt-4 pb-3 flex items-start justify-between">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-widest text-blue-300 mb-1">{companyName} | Refinance Savings Analysis</div>
+              <div className="text-xl font-black">Prepared for: {clientProfile.borrowerName || 'Borrower'}</div>
+              <div className="text-blue-300 text-xs mt-1 flex items-center gap-3">
+                {s.isARM ? `${s.armType || 'ARM'}` : '30-Year Fixed'}
+                {s.goal === 'cash_out' ? ' · Cash-Out Refi' : ' · Rate & Term Refi'}
+                {activeStrategyResult?.strategyLabel ? ` · ${activeStrategyResult.strategyLabel}` : ''}
+                {s.monthlySavings > 0 && ` · Net savings before sale: +${money(s.monthlySavings * 60)}`}
+              </div>
+              <div className="text-blue-400 text-xs mt-0.5">{today}</div>
+            </div>
+            {isCardRecommended(s) && (
+              <div className="bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1">
+                <Star className="w-3 h-3" /> AI RECOMMENDED
               </div>
             )}
-            <div className="text-blue-300 text-xs mt-0.5">{today}</div>
           </div>
-          {(s === recommended || isCardRecommended(s)) && (
-            <div className="bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5">
-              <Star className="w-3 h-3" /> AI RECOMMENDED
+
+          {/* LTV bar */}
+          {clientProfile.estimatedValue && (
+            <div className="px-5 pb-3 text-xs text-blue-400">
+              LTV: {Math.round((s.newLoanAmount / parseFloat(clientProfile.estimatedValue)) * 100)}% of {money(clientProfile.estimatedValue)} estimated value
             </div>
           )}
-        </div>
 
-        {/* Top summary */}
-        <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-gray-200 border-b border-gray-200">
-          <SummaryCell label="Paying Now" value={`${money(currentTotalPayment)}/mo`} sub="All current obligations" />
-          <SummaryCell label="After Refinance" value={`${money(s.newTotalPayment)}/mo`} sub={`P&I: ${money(s.newPI)} + Escrow: ${s.newEscrow > 0 ? money(s.newEscrow) : '—'}`} />
-          <SummaryCell label="Monthly Savings" value={`${money(s.monthlySavings)}/mo`} highlight
-            sub={s.yearsInHome
-              ? `${money(s.annualSavings)}/yr · ${money(s.horizonSavings || s.fiveYearSavings)} over ${s.yearsInHome} yrs`
-              : `${money(s.annualSavings)}/yr · ${money(s.fiveYearSavings)} over 5 yrs`}
-          />
-          <SummaryCell label="Cash Out to Client" value={s.cashOut > 0 ? `~${money(netCashOut)}` : '—'} sub={s.cashOut > 0 ? 'Net after closing costs' : 'Rate & Term refi'} />
-        </div>
-
-        {/* New loan terms */}
-        <div className="border-b border-gray-200">
-          <div className="bg-gray-50 px-4 py-2 text-xs font-bold uppercase tracking-wider text-gray-500">New Loan Terms</div>
-          <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-gray-200">
+          {/* Key numbers row */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 border-t border-blue-800">
             {[
-              { label: 'Loan Amount', value: money(s.newLoanAmount) },
-              { label: 'Interest Rate', value: pct(s.rate), blue: true },
-              { label: 'Term', value: s.isARM ? `${s.armType || 'ARM'} → 30yr` : '30 Year Fixed' },
-              { label: 'P&I Payment', value: money(s.newPI) + '/mo', blue: true },
-              { label: 'Escrow (T&I)', value: s.newEscrow > 0 ? money(s.newEscrow) + '/mo' : '—' },
-              { label: 'Total Payment', value: money(s.newTotalPayment) + '/mo', blue: true },
-              { label: 'Recoupment', value: s.breakevenMonths === 0 ? 'Immediate' : `${s.breakevenMonths} months` },
-            ].map((item, i) => (
-              <div key={i} className="px-4 py-3">
-                <div className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-1">{item.label}</div>
-                <div className={`text-base font-bold ${item.blue ? 'text-blue-700' : 'text-gray-900'}`}>{item.value}</div>
+              ['PAYING NOW', money(currentTotalPayment) + '/mo', 'All current obligations', false],
+              ['AFTER REFINANCE', money(s.newPI + parseFloat(clientProfile.escrow || 0)) + '/mo', `P&I: ${money(s.newPI)} + Escrow: ${money(clientProfile.escrow || 0)}`, false],
+              ['MONTHLY SAVINGS', (s.monthlySavings > 0 ? '+' : '') + money(s.monthlySavings) + '/mo', `${money(s.monthlySavings * 12)}/yr · ${money(s.monthlySavings * 60)} over 5 yrs`, true],
+              ...(s.cashOut > 0 ? [['CASH OUT TO CLIENT', '~' + money(netCashOut), 'Net after closing costs', true]] : []),
+            ].map(([label, val, sub, green], i) => (
+              <div key={i} className={`p-4 border-r border-blue-800 last:border-r-0 ${green ? 'bg-blue-800/40' : ''}`}>
+                <div className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-1">{label}</div>
+                <div className={`text-2xl font-black ${green ? 'text-green-400' : 'text-white'}`}>{val}</div>
+                <div className="text-blue-400 text-xs mt-1">{sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* New loan terms */}
+          <div className="grid grid-cols-3 sm:grid-cols-5 border-t border-blue-800 text-center">
+            {[
+              ['LOAN AMOUNT', money(s.newLoanAmount)],
+              ['INTEREST RATE', pct(s.rate)],
+              ['TERM', s.isARM ? (s.armType || 'ARM') + ' → 30yr' : '30-Year Fixed'],
+              ['P&I PAYMENT', money(s.newPI) + '/mo'],
+              ['RECOUPMENT', s.breakevenMonths === 0 ? 'Immediate' : s.breakevenMonths + ' months'],
+            ].map(([label, val], i) => (
+              <div key={i} className="p-3 border-r border-blue-800 last:border-r-0">
+                <div className="text-xs text-blue-400 uppercase tracking-wider mb-1">{label}</div>
+                <div className={`font-bold text-sm ${label === 'INTEREST RATE' ? 'text-blue-300 text-base' : 'text-white'}`}>{val}</div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Loan balance breakdown */}
-        <div className="border-b border-gray-200">
-          <div className="bg-gray-50 px-4 py-2 text-xs font-bold uppercase tracking-wider text-gray-500">New Loan Balance Breakdown</div>
-          <div className="px-4 py-3 space-y-2 text-sm">
+        {/* Loan Balance Breakdown */}
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+          <div className="bg-gray-50 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-200">
+            New Loan Balance Breakdown
+          </div>
+          <div className="px-4 py-3 space-y-1.5 text-sm">
             {[
               ['Current Mortgage Balance', s.currentBalance || clientProfile.currentBalance, null],
               ...(s.debtBalanceTotal > 0 ? [['Debts Being Paid Off', s.debtBalanceTotal, null]] : []),
-              ['Title & Settlement Charges', s.titleCharges || clientProfile.titleCharges, null],
+              ['Title & Settlement Charges', s.titleCharges || parseFloat(clientProfile.titleCharges) || 0, null],
               ...((s.lenderFees || lenderFees) > 0 ? [['Lender Fees (Processing + Underwriting)', s.lenderFees || lenderFees, null]] : []),
               ...(s.cashOut > 0 ? [['Cash-Out Amount', s.cashOut, null]] : []),
               ...(s.borrowerPaysPct > 0 ? [[`Discount Points (${s.borrowerPaysPct?.toFixed(3)}% of loan)`, s.pointsCost, 'amber']] : []),
               ...(s.lenderCreditPct > 0 ? [[`Lender Credit (${s.lenderCreditPct?.toFixed(3)}% of loan)`, -s.lenderCredit, 'green']] : []),
-            ].map(([label, val, color], i, arr) => (
-              <div key={i} className={`flex justify-between py-1.5 border-b border-gray-100`}>
-                <span className={color === 'amber' ? 'text-amber-700 font-medium' : color === 'green' ? 'text-green-700 font-medium' : 'text-gray-600'}>{label}</span>
+            ].filter(([, v]) => v !== 0 && v != null).map(([label, val, color], i) => (
+              <div key={i} className="flex justify-between py-1.5 border-b border-gray-100">
+                <span className={color === 'amber' ? 'text-amber-700 font-semibold' : color === 'green' ? 'text-green-700 font-semibold' : 'text-gray-600'}>{label}</span>
                 <span className={`font-semibold ${color === 'amber' ? 'text-amber-700' : color === 'green' ? 'text-green-700' : ''}`}>
                   {color === 'green' ? '-' : color === 'amber' ? '+' : ''}{money(Math.abs(val))}
                 </span>
               </div>
             ))}
             <div className="flex justify-between pt-2 border-t-2 border-gray-300">
-              <span className="font-bold text-gray-900">New Loan Total</span>
-              <span className="font-bold text-blue-700 text-base">{money(s.newLoanAmount)}</span>
+              <span className="font-black text-gray-900">New Loan Total</span>
+              <span className="font-black text-blue-700 text-base">{money(s.newLoanAmount)}</span>
             </div>
-            {/* Closing costs summary */}
-            <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5 text-xs">
-              <div className="flex justify-between font-semibold text-sm">
-                <span>Net Closing Costs</span>
-                <span>{money(s.netClosingCosts)}</span>
+            <div className="mt-2 space-y-1 text-xs border-t border-gray-100 pt-2">
+              <div className="flex justify-between">
+                <span className="text-gray-500">Net Closing Costs</span>
+                <span className={`font-bold ${s.netClosingCosts <= 0 ? 'text-green-600' : 'text-gray-800'}`}>{s.netClosingCosts <= 0 ? '-' : ''}{money(Math.abs(s.netClosingCosts))}</span>
               </div>
-              <div className="flex justify-between text-gray-500">
-                <span>Recoupment period</span>
-                <span className={`font-semibold ${s.breakevenMonths <= 24 ? 'text-green-700' : s.breakevenMonths <= 36 ? 'text-amber-700' : 'text-red-700'}`}>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Recoupment period</span>
+                <span className={`font-bold ${s.breakevenMonths <= 24 ? 'text-green-700' : s.breakevenMonths <= 36 ? 'text-amber-700' : 'text-red-700'}`}>
                   {s.breakevenMonths === 0 ? 'Immediate' : `${s.breakevenMonths} months`}
                 </span>
               </div>
@@ -434,187 +423,154 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
           </div>
         </div>
 
-        {/* LO-only: Compensation / YSP box — not shown to client */}
+        {/* LO-only: Internal Price Stack — not for client */}
         {marginBPS > 0 && (() => {
           const brokerMarginPct = (parseFloat(marginBPS) || 0) / 100;
-          // baseNetPoints = what the lender sheet actually pays (before broker margin)
-          // clientNetPoints (s.netPointsPct) = baseNetPoints + brokerMarginPct
           const baseNetPoints = (s.netPointsPct ?? 0) - brokerMarginPct;
-          const baseDollar = Math.round(Math.abs(baseNetPoints) / 100 * s.newLoanAmount);
           const marginDollarAmt = Math.round(brokerMarginPct / 100 * s.newLoanAmount);
           const yspEarned = marginDollar ? parseFloat(marginDollar) : marginDollarAmt;
-
-          // Build price stack rows
-          // UWM rate sheet shows "net points" already adjusted for standard LLPAs
-          // We show: Base Price → LLPA hits → Net Lender Price → Broker Margin → Final Client Price
-          const priceRows = [
-            {
-              label: 'Rate',
-              value: `${s.rate?.toFixed(3)}%`,
-              note: s.isARM ? (s.armType || 'ARM') : '30-Year Fixed',
-              style: 'header',
-            },
-            {
-              label: 'Lender Base Price (from rate sheet)',
-              value: baseNetPoints <= 0
-                ? `-${Math.abs(baseNetPoints).toFixed(3)}%`
-                : `+${baseNetPoints.toFixed(3)}%`,
-              dollar: baseNetPoints <= 0
-                ? `-${money(baseDollar)}`
-                : `+${money(baseDollar)}`,
-              note: baseNetPoints <= 0 ? 'lender paying credit' : 'cost to borrower',
-              style: baseNetPoints <= 0 ? 'credit' : 'cost',
-            },
-            {
-              label: `Broker Margin (${marginBPS} BPS)`,
-              value: `+${brokerMarginPct.toFixed(3)}%`,
-              dollar: `+${money(marginDollarAmt)}`,
-              note: 'your compensation — added to price',
-              style: 'margin',
-            },
-            {
-              label: 'Final Client Price',
-              value: s.lenderCreditPct > 0
-                ? `-${s.lenderCreditPct.toFixed(3)}% credit`
-                : s.borrowerPaysPct > 0
-                  ? `+${s.borrowerPaysPct.toFixed(3)}% points`
-                  : 'Par (0.000%)',
-              dollar: s.lenderCreditPct > 0
-                ? `-${money(s.lenderCredit)}`
-                : s.borrowerPaysPct > 0
-                  ? `+${money(s.pointsCost)}`
-                  : '$0',
-              note: s.lenderCreditPct > 0
-                ? 'client receives as closing credit'
-                : s.borrowerPaysPct > 0
-                  ? 'client pays as discount points'
-                  : 'no cost to client, no credit',
-              style: 'final',
-            },
-          ];
+          const loan = s.newLoanAmount;
 
           return (
-            <div className="border-b border-blue-200 bg-blue-50">
-              <div className="bg-blue-100 px-4 py-2 text-xs font-bold uppercase tracking-wider text-blue-700 flex items-center gap-2">
-                <span>🔒</span> Internal Pricing & Compensation — Not for Client
+            <div className="bg-blue-50 border border-blue-200 rounded-2xl overflow-hidden shadow-sm no-print">
+              <div className="bg-[#1e3a5f] px-4 py-2.5 flex items-center justify-between">
+                <div className="text-xs font-black uppercase tracking-wider text-blue-200 flex items-center gap-2">
+                  🔒 Internal Pricing & Compensation — Not for Client
+                </div>
+                <div className="text-xs text-blue-400">{s.program} · {s.rate?.toFixed(3)}% · {s.isARM ? (s.armType || 'ARM') : '30-Year Fixed'}</div>
               </div>
-              <div className="px-4 py-4 space-y-3">
 
-                {/* Price Stack Table */}
-                <div className="bg-white rounded-xl border border-blue-200 overflow-hidden">
-                  <div className="bg-blue-700 px-4 py-2 flex items-center justify-between">
-                    <div className="text-xs font-bold text-blue-100 uppercase tracking-wider">Price Stack — {s.program} {s.rate?.toFixed(3)}%</div>
-                    <div className="text-xs text-blue-300">{s.isARM ? (s.armType || 'ARM') : '30-Year Fixed'}</div>
+              {/* Quick summary tiles */}
+              <div className="grid grid-cols-3 gap-3 p-4 border-b border-blue-200">
+                <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
+                  <div className="text-xs text-blue-500 font-bold uppercase mb-1">Rate</div>
+                  <div className="text-2xl font-black text-gray-900">{s.rate?.toFixed(3)}%</div>
+                  <div className="text-xs text-gray-400">{s.isARM ? (s.armType || 'ARM') : '30-yr Fixed'}</div>
+                </div>
+                <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
+                  <div className="text-xs text-blue-500 font-bold uppercase mb-1">YSP Earned</div>
+                  <div className="text-2xl font-black text-green-700">{money(yspEarned)}</div>
+                  <div className="text-xs text-gray-400">{marginBPS} BPS on {money(loan)}</div>
+                </div>
+                <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
+                  <div className="text-xs text-blue-500 font-bold uppercase mb-1">Net to Client</div>
+                  <div className={`text-2xl font-black ${s.lenderCreditPct > 0 ? 'text-green-700' : s.borrowerPaysPct > 0 ? 'text-amber-700' : 'text-gray-500'}`}>
+                    {s.lenderCreditPct > 0 ? `-${money(s.lenderCredit)}` : s.borrowerPaysPct > 0 ? `+${money(s.pointsCost)}` : '$0'}
                   </div>
+                  <div className="text-xs text-gray-400">{s.lenderCreditPct > 0 ? 'credit to client' : s.borrowerPaysPct > 0 ? 'points charged' : 'par — no cost'}</div>
+                </div>
+              </div>
+
+              {/* Full price stack table */}
+              <div className="p-4">
+                <div className="text-xs font-bold text-blue-700 uppercase tracking-wide mb-2">Full Price Stack</div>
+                <div className="bg-white rounded-xl border border-blue-200 overflow-hidden">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-blue-100 bg-blue-50">
-                        <th className="text-left px-4 py-2 text-xs font-semibold text-blue-600">Item</th>
-                        <th className="text-right px-4 py-2 text-xs font-semibold text-blue-600">Points %</th>
-                        <th className="text-right px-4 py-2 text-xs font-semibold text-blue-600">Dollar</th>
+                      <tr className="bg-blue-50 border-b border-blue-100">
+                        <th className="text-left px-4 py-2 text-xs font-bold text-blue-600 uppercase">Item</th>
+                        <th className="text-right px-4 py-2 text-xs font-bold text-blue-600 uppercase">Points %</th>
+                        <th className="text-right px-4 py-2 text-xs font-bold text-blue-600 uppercase">Dollar</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {/* Base price from rate sheet */}
-                      <tr className="border-b border-blue-50">
+                      {/* Base price */}
+                      <tr className="border-b border-gray-100">
                         <td className="px-4 py-2.5 text-gray-700 font-medium">
-                          Base Price (rate sheet, 30-day lock)
+                          Base Price (rate sheet — 30-day lock)
                           <div className="text-xs text-gray-400 font-normal">before LLPA adjustments</div>
                         </td>
                         <td className={`px-4 py-2.5 text-right font-mono font-bold ${(s.basePoints ?? baseNetPoints) <= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                          {((s.basePoints ?? baseNetPoints) <= 0 ? '' : '+')}{(s.basePoints ?? baseNetPoints).toFixed(3)}%
+                          {(s.basePoints ?? baseNetPoints) <= 0 ? '' : '+'}{(s.basePoints ?? baseNetPoints).toFixed(3)}%
                         </td>
                         <td className={`px-4 py-2.5 text-right font-mono text-xs ${(s.basePoints ?? baseNetPoints) <= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                          {(s.basePoints ?? baseNetPoints) <= 0 ? '-' : '+'}{money(Math.abs((s.basePoints ?? baseNetPoints) / 100 * s.newLoanAmount))}
+                          {(s.basePoints ?? baseNetPoints) <= 0 ? '-' : '+'}{money(Math.abs((s.basePoints ?? baseNetPoints) / 100 * loan))}
                         </td>
                       </tr>
-                      {/* LLPA hits */}
-                      {(s.llpaHits?.length > 0) ? (
-                        s.llpaHits.map((hit, i) => (
-                          <tr key={i} className="border-b border-orange-50 bg-orange-50">
-                            <td className="px-4 py-2 text-orange-800 text-xs font-medium">⚡ LLPA: {hit.description}</td>
-                            <td className={`px-4 py-2 text-right font-mono text-xs font-bold ${hit.hit <= 0 ? 'text-green-700' : 'text-orange-700'}`}>
-                              {hit.hit <= 0 ? '' : '+'}{hit.hit.toFixed(3)}%
-                            </td>
-                            <td className={`px-4 py-2 text-right font-mono text-xs ${hit.hit <= 0 ? 'text-green-600' : 'text-orange-600'}`}>
-                              {hit.hit <= 0 ? '-' : '+'}{money(Math.abs(hit.hit / 100 * s.newLoanAmount))}
-                            </td>
-                          </tr>
-                        ))
-                      ) : (() => {
+
+                      {/* LLPA hits — from parsed rate sheet */}
+                      {(s.llpaHits?.length > 0) ? s.llpaHits.map((hit, i) => (
+                        <tr key={i} className="border-b border-orange-50 bg-orange-50">
+                          <td className="px-4 py-2 text-orange-800 text-xs font-semibold">⚡ LLPA: {hit.description}</td>
+                          <td className={`px-4 py-2 text-right font-mono text-xs font-bold ${hit.hit <= 0 ? 'text-green-700' : 'text-orange-700'}`}>
+                            {hit.hit <= 0 ? '' : '+'}{hit.hit.toFixed(3)}%
+                          </td>
+                          <td className={`px-4 py-2 text-right font-mono text-xs ${hit.hit <= 0 ? 'text-green-600' : 'text-orange-600'}`}>
+                            {hit.hit <= 0 ? '-' : '+'}{money(Math.abs(hit.hit / 100 * loan))}
+                          </td>
+                        </tr>
+                      )) : (() => {
                         const llpaTotal = baseNetPoints - (s.basePoints ?? baseNetPoints);
                         return llpaTotal !== 0 ? (
                           <tr className="border-b border-orange-50 bg-orange-50">
-                            <td className="px-4 py-2 text-orange-800 text-xs font-medium">
-                              ⚡ LLPA Adjustments (FICO {clientProfile?.ficoScore}, LTV ~{Math.round((clientProfile?.currentBalance / clientProfile?.estimatedValue) * 100)}%, {s.goal === 'cash_out' ? 'Cash-Out' : 'Rate/Term'})
+                            <td className="px-4 py-2 text-orange-800 text-xs font-semibold">
+                              ⚡ LLPA Adjustments (FICO {clientProfile?.ficoScore}, LTV ~{clientProfile?.estimatedValue ? Math.round((parseFloat(clientProfile.currentBalance) / parseFloat(clientProfile.estimatedValue)) * 100) : '?'}%, {s.goal === 'cash_out' ? 'Cash-Out' : 'Rate/Term'})
                             </td>
                             <td className={`px-4 py-2 text-right font-mono text-xs font-bold ${llpaTotal <= 0 ? 'text-green-700' : 'text-orange-700'}`}>
                               {llpaTotal <= 0 ? '' : '+'}{llpaTotal.toFixed(3)}%
                             </td>
                             <td className={`px-4 py-2 text-right font-mono text-xs ${llpaTotal <= 0 ? 'text-green-600' : 'text-orange-600'}`}>
-                              {llpaTotal <= 0 ? '-' : '+'}{money(Math.abs(llpaTotal / 100 * s.newLoanAmount))}
+                              {llpaTotal <= 0 ? '-' : '+'}{money(Math.abs(llpaTotal / 100 * loan))}
                             </td>
                           </tr>
                         ) : null;
                       })()}
+
                       {/* Net lender price subtotal */}
                       <tr className="border-b-2 border-blue-200 bg-gray-50">
-                        <td className="px-4 py-2.5 text-gray-800 font-semibold text-xs uppercase tracking-wide">Net Lender Price (after LLPAs)</td>
+                        <td className="px-4 py-2.5 text-gray-800 font-bold text-xs uppercase tracking-wide">Net Lender Price (after all LLPAs)</td>
                         <td className={`px-4 py-2.5 text-right font-mono font-bold ${baseNetPoints <= 0 ? 'text-green-700' : 'text-amber-700'}`}>
                           {baseNetPoints <= 0 ? '' : '+'}{baseNetPoints.toFixed(3)}%
                         </td>
-                        <td className={`px-4 py-2.5 text-right font-mono text-xs ${baseNetPoints <= 0 ? 'text-green-600' : 'text-amber-600'}`}>
-                          {baseNetPoints <= 0 ? '-' : '+'}{money(Math.abs(baseNetPoints / 100 * s.newLoanAmount))}
+                        <td className={`px-4 py-2.5 text-right font-mono text-xs font-semibold ${baseNetPoints <= 0 ? 'text-green-600' : 'text-amber-600'}`}>
+                          {baseNetPoints <= 0 ? '-' : '+'}{money(Math.abs(baseNetPoints / 100 * loan))}
                         </td>
                       </tr>
+
                       {/* Broker margin */}
                       <tr className="border-b border-amber-100 bg-amber-50">
-                        <td className="px-4 py-2.5 text-amber-800 font-medium">
+                        <td className="px-4 py-2.5 text-amber-800 font-semibold">
                           Broker Margin ({marginBPS} BPS)
                           <div className="text-xs text-amber-600 font-normal">your compensation — added to price</div>
                         </td>
                         <td className="px-4 py-2.5 text-right font-mono font-bold text-amber-700">+{brokerMarginPct.toFixed(3)}%</td>
-                        <td className="px-4 py-2.5 text-right font-mono text-xs text-amber-600">+{money(marginDollarAmt)}</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-xs font-semibold text-amber-600">+{money(marginDollarAmt)}</td>
                       </tr>
+
+                      {/* Points charged to customer */}
+                      {s.borrowerPaysPct > 0 && (
+                        <tr className="border-b border-red-100 bg-red-50">
+                          <td className="px-4 py-2.5 text-red-800 font-semibold">
+                            Discount Points Charged to Client ({s.borrowerPaysPct.toFixed(3)}%)
+                            <div className="text-xs text-red-600 font-normal">rolled into loan or paid at closing</div>
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono font-bold text-red-700">+{s.borrowerPaysPct.toFixed(3)}%</td>
+                          <td className="px-4 py-2.5 text-right font-mono text-xs font-semibold text-red-600">+{money(s.pointsCost)}</td>
+                        </tr>
+                      )}
+
                       {/* Final client price */}
-                      <tr className="bg-blue-50 font-bold">
-                        <td className="px-4 py-3 text-blue-900 font-bold">
+                      <tr className="bg-blue-50">
+                        <td className="px-4 py-3 text-blue-900 font-black">
                           Final Client Price
-                          <div className="text-xs font-normal text-blue-600">{s.lenderCreditPct > 0 ? 'credit toward closing costs' : s.borrowerPaysPct > 0 ? 'charged as discount points' : 'no cost, no credit — par'}</div>
+                          <div className="text-xs font-normal text-blue-600">
+                            {s.lenderCreditPct > 0 ? 'credit applied toward closing costs' : s.borrowerPaysPct > 0 ? 'discount points charged to borrower' : 'par — no cost to borrower, no credit'}
+                          </div>
                         </td>
-                        <td className={`px-4 py-3 text-right font-mono font-bold text-base ${s.lenderCreditPct > 0 ? 'text-green-700' : s.borrowerPaysPct > 0 ? 'text-red-600' : 'text-blue-700'}`}>
+                        <td className={`px-4 py-3 text-right font-mono font-black text-lg ${s.lenderCreditPct > 0 ? 'text-green-700' : s.borrowerPaysPct > 0 ? 'text-red-600' : 'text-blue-700'}`}>
                           {s.lenderCreditPct > 0 ? `-${s.lenderCreditPct.toFixed(3)}%` : s.borrowerPaysPct > 0 ? `+${s.borrowerPaysPct.toFixed(3)}%` : '0.000%'}
                         </td>
-                        <td className={`px-4 py-3 text-right font-mono font-bold ${s.lenderCreditPct > 0 ? 'text-green-700' : s.borrowerPaysPct > 0 ? 'text-red-600' : 'text-blue-700'}`}>
+                        <td className={`px-4 py-3 text-right font-mono font-black text-base ${s.lenderCreditPct > 0 ? 'text-green-700' : s.borrowerPaysPct > 0 ? 'text-red-600' : 'text-blue-700'}`}>
                           {s.lenderCreditPct > 0 ? `-${money(s.lenderCredit)}` : s.borrowerPaysPct > 0 ? `+${money(s.pointsCost)}` : '$0'}
                         </td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
-                    <div className="text-xs text-blue-500 font-semibold uppercase mb-1">Rate</div>
-                    <div className="font-bold text-gray-900 text-lg">{s.rate?.toFixed(3)}%</div>
-                    <div className="text-xs text-gray-400">{s.isARM ? 'ARM' : '30yr Fixed'}</div>
-                  </div>
-                  <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
-                    <div className="text-xs text-blue-500 font-semibold uppercase mb-1">YSP Earned</div>
-                    <div className="font-bold text-green-700 text-lg">{money(yspEarned)}</div>
-                    <div className="text-xs text-gray-400">{marginBPS} BPS on {money(s.newLoanAmount)}</div>
-                  </div>
-                  <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
-                    <div className="text-xs text-blue-500 font-semibold uppercase mb-1">Lender Base</div>
-                    <div className={`font-bold text-lg ${baseNetPoints <= 0 ? 'text-green-700' : 'text-amber-700'}`}>
-                      {baseNetPoints <= 0 ? `${Math.abs(baseNetPoints).toFixed(3)}% cr` : `${baseNetPoints.toFixed(3)}% cost`}
-                    </div>
-                    <div className="text-xs text-gray-400">sheet price pre-margin</div>
-                  </div>
-                </div>
 
                 {/* Narrative */}
-                <div className="bg-blue-100 rounded-lg px-3 py-2.5 text-xs text-blue-800 leading-relaxed">
-                  <span className="font-bold">Price build:</span> UWM rate sheet at {s.rate?.toFixed(3)}% shows <span className="font-semibold">{baseNetPoints <= 0 ? `${Math.abs(baseNetPoints).toFixed(3)}% lender credit` : `${baseNetPoints.toFixed(3)}% cost`}</span> as the base price. After adding your <span className="font-semibold">{marginBPS} BPS broker margin</span>, the final price to client is <span className="font-semibold">{s.lenderCreditPct > 0 ? `${s.lenderCreditPct.toFixed(3)}% credit (${money(s.lenderCredit)})` : s.borrowerPaysPct > 0 ? `${s.borrowerPaysPct.toFixed(3)}% in points (${money(s.pointsCost)})` : 'par — no cost, no credit'}</span>. Your YSP is <span className="font-semibold text-green-800">{money(yspEarned)}</span>.
+                <div className="mt-3 bg-blue-100 rounded-lg px-3 py-2.5 text-xs text-blue-800 leading-relaxed">
+                  <span className="font-bold">Price build:</span> UWM sheet at <span className="font-bold">{s.rate?.toFixed(3)}%</span> → base price <span className="font-bold">{(s.basePoints ?? baseNetPoints) <= 0 ? `${Math.abs(s.basePoints ?? baseNetPoints).toFixed(3)}% credit` : `${(s.basePoints ?? baseNetPoints).toFixed(3)}% cost`}</span> → after LLPAs: <span className="font-bold">{baseNetPoints <= 0 ? `${Math.abs(baseNetPoints).toFixed(3)}% credit` : `${baseNetPoints.toFixed(3)}% cost`}</span> → add <span className="font-bold">{marginBPS} BPS margin</span> → client gets <span className="font-bold">{s.lenderCreditPct > 0 ? `${s.lenderCreditPct.toFixed(3)}% credit (${money(s.lenderCredit)})` : s.borrowerPaysPct > 0 ? `charged ${s.borrowerPaysPct.toFixed(3)}% points (${money(s.pointsCost)})` : 'par'}</span>. YSP: <span className="font-bold text-green-800">{money(yspEarned)}</span>.
                 </div>
               </div>
             </div>
@@ -622,51 +578,43 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
         })()}
 
         {/* Debts paid off */}
-        <div className="border-b border-gray-200">
-          <div className="bg-gray-50 px-4 py-2 text-xs font-bold uppercase tracking-wider text-gray-500">Debts Paid Off at Closing</div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100">
-                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Creditor</th>
-                <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Type</th>
-                <th className="text-right px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Mo. Payment</th>
-                <th className="text-right px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Payoff Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b border-gray-50">
-                <td className="px-4 py-2.5 font-semibold">{clientProfile.mortgageLender || 'Current Mortgage'}</td>
-                <td className="px-4 py-2.5 text-gray-500">Mortgage</td>
-                <td className="px-4 py-2.5 text-right">{money(currentMortgagePI)}/mo</td>
-                <td className="px-4 py-2.5 text-right font-semibold">{money(clientProfile.currentBalance)}</td>
-              </tr>
-              {paidDebts.map((d, i) => (
-                <tr key={i} className="border-b border-gray-50">
-                  <td className="px-4 py-2.5">{d.name}</td>
-                  <td className="px-4 py-2.5 text-gray-500">{d.type}</td>
-                  <td className="px-4 py-2.5 text-right">{money(d.payment)}/mo</td>
-                  <td className="px-4 py-2.5 text-right font-semibold">{money(d.balance)}</td>
+        {paidDebts.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+            <div className="bg-gray-50 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-200">Debts Paid Off at Closing</div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Creditor</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Type</th>
+                  <th className="text-right px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Balance</th>
+                  <th className="text-right px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Mo. Payment</th>
                 </tr>
-              ))}
-              <tr className="bg-gray-50 font-bold">
-                <td className="px-4 py-2.5" colSpan={2}>Total Eliminated</td>
-                <td className="px-4 py-2.5 text-right text-green-700">-{money(debtPaymentTotal + currentMortgagePI)}/mo</td>
-                <td className="px-4 py-2.5 text-right">{money((clientProfile.currentBalance || 0) + (s.debtBalanceTotal || 0))}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {paidDebts.map((d, i) => (
+                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="px-4 py-2 font-medium text-gray-900">{d.name}</td>
+                    <td className="px-4 py-2 text-gray-500">{d.type}</td>
+                    <td className="px-4 py-2 text-right">{money(d.balance)}</td>
+                    <td className="px-4 py-2 text-right text-green-700 font-semibold">-{money(d.payment)}/mo</td>
+                  </tr>
+                ))}
+                <tr className="bg-gray-50 font-bold">
+                  <td className="px-4 py-2.5" colSpan={2}>Total Eliminated</td>
+                  <td className="px-4 py-2.5 text-right">{money(s.debtBalanceTotal)}</td>
+                  <td className="px-4 py-2.5 text-right text-green-700">-{money(debtPaymentTotal + currentMortgagePI)}/mo</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {/* Disclaimer */}
-        <div className="px-4 py-3 text-xs text-gray-400">
-          This analysis is for illustrative purposes only. Final loan terms are subject to underwriting approval. ARM rates adjust after the initial fixed period based on SOFR index.
+        <div className="text-xs text-gray-400 text-center py-2">
+          This analysis is for illustrative purposes only. Final loan terms are subject to underwriting approval. Prepared by {companyName}.
         </div>
-      </div>
+
+      </div>{/* end printRef */}
     </div>
   );
 }
-
-
-
-
-
