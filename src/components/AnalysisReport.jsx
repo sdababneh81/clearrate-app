@@ -156,18 +156,33 @@ function LoanSummaryBar({ scenario: s, clientProfile }) {
   );
 }
 
-export default function AnalysisReport({ result, clientProfile, selectedDebts, marginBPS, marginDollar, companyName = 'Priority 1 Lending' }) {
+export default function AnalysisReport({ result, clientProfile, selectedDebts, marginBPS, marginDollar, lenderFees = 0, pricingStrategies = [], companyName = 'Priority 1 Lending' }) {
   const [activeScenario, setActiveScenario] = useState(result.recommended);
   const [activeGoalTab, setActiveGoalTab] = useState('rate_term');
   const [productTab, setProductTab] = useState('fixed'); // 'fixed' | 'arm'
+  const [activeStrategy, setActiveStrategy] = useState(
+    result.strategyResults?.length ? result.strategyResults[0].strategy : null
+  );
 
   const { scenarios, recommended, currentTotalPayment, currentMortgagePI, debtPaymentTotal, remainingPayments, lowRateWarning, currentRate: resultCurrentRate } = result;
+
+  const STRATEGY_META = {
+    lowest_rate: { icon: '📉', label: 'Lowest Rate', color: 'blue' },
+    margin_cost: { icon: '⚖️', label: 'Margin Cost', color: 'purple' },
+    no_cost:     { icon: '🎁', label: 'No Cost',     color: 'green' },
+    low_cost:    { icon: '💰', label: 'Low Cost',    color: 'amber' },
+  };
 
   const paidDebts = selectedDebts.filter(d => d.selected);
   const remainingDebts = selectedDebts.filter(d => !d.selected);
 
-  const goalTabs = [...new Set(scenarios.map(s => s.goal))];
-  const visibleScenarios = scenarios.filter(s => s.goal === activeGoalTab);
+  // Strategy-aware scenario filtering
+  const strategyResults = result.strategyResults || [];
+  const activeStrategyResult = strategyResults.find(r => r.strategy === activeStrategy) || strategyResults[0];
+  const strategyScenarios = activeStrategyResult?.scenarios || scenarios;
+
+  const goalTabs = [...new Set(strategyScenarios.map(s => s.goal))];
+  const visibleScenarios = strategyScenarios.filter(s => s.goal === activeGoalTab);
   const fixedScenarios = visibleScenarios.filter(sc => !sc.isARM);
   const armScenarios = visibleScenarios.filter(sc => sc.isARM);
 
@@ -228,6 +243,40 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
               {g === 'rate_term' ? 'Rate & Term' : 'Cash-Out'}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Strategy tabs */}
+      {strategyResults.length > 1 && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
+          <div className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Pricing Strategy</div>
+          <div className="flex flex-wrap gap-2">
+            {strategyResults.map(sr => {
+              const meta = STRATEGY_META[sr.strategy] || {};
+              const isActive = activeStrategy === sr.strategy;
+              const rec = sr.recommended;
+              return (
+                <button key={sr.strategy} onClick={() => { setActiveStrategy(sr.strategy); setActiveScenario(sr.recommended); }}
+                  className={`flex-1 min-w-[140px] text-left p-3 rounded-xl border-2 transition-all ${isActive ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300 bg-white'}`}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-lg">{meta.icon}</span>
+                    <span className={`text-xs font-bold ${isActive ? 'text-blue-700' : 'text-gray-600'}`}>{meta.label}</span>
+                    {isActive && <span className="ml-auto text-blue-500 text-xs">●</span>}
+                  </div>
+                  {rec && (
+                    <>
+                      <div className="text-base font-bold text-gray-900">{rec.rate?.toFixed(3)}%</div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {rec.lenderCreditPct > 0 ? `${rec.lenderCreditPct.toFixed(3)}% credit` : rec.borrowerPaysPct > 0 ? `${rec.borrowerPaysPct.toFixed(3)}% pts` : 'Par'}
+                        {rec.monthlySavings > 0 ? ` · saves $${rec.monthlySavings}/mo` : ''}
+                      </div>
+                      {rec.efficiencyLabel && <div className="text-xs mt-1">{rec.efficiencyLabel}</div>}
+                    </>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -351,11 +400,12 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
           <div className="px-4 py-3 space-y-2 text-sm">
             {[
               ['Current Mortgage Balance', s.currentBalance || clientProfile.currentBalance, null],
-              ['Debts Being Paid Off', s.debtBalanceTotal, null],
-              ['Title & Settlement Charges', s.titleCharges, null],
+              ...(s.debtBalanceTotal > 0 ? [['Debts Being Paid Off', s.debtBalanceTotal, null]] : []),
+              ['Title & Settlement Charges', s.titleCharges || clientProfile.titleCharges, null],
+              ...((s.lenderFees || lenderFees) > 0 ? [['Lender Fees (Processing + Underwriting)', s.lenderFees || lenderFees, null]] : []),
               ...(s.cashOut > 0 ? [['Cash-Out Amount', s.cashOut, null]] : []),
-              ...(s.borrowerPaysPct > 0 ? [[`Discount Points (${s.borrowerPaysPct?.toFixed(3)}%)`, s.pointsCost, 'amber']] : []),
-              ...(s.lenderCreditPct > 0 ? [[`Lender Credit (${s.lenderCreditPct?.toFixed(3)}%)`, -s.lenderCredit, 'green']] : []),
+              ...(s.borrowerPaysPct > 0 ? [[`Discount Points (${s.borrowerPaysPct?.toFixed(3)}% of loan)`, s.pointsCost, 'amber']] : []),
+              ...(s.lenderCreditPct > 0 ? [[`Lender Credit (${s.lenderCreditPct?.toFixed(3)}% of loan)`, -s.lenderCredit, 'green']] : []),
             ].map(([label, val, color], i, arr) => (
               <div key={i} className={`flex justify-between py-1.5 border-b border-gray-100`}>
                 <span className={color === 'amber' ? 'text-amber-700 font-medium' : color === 'green' ? 'text-green-700 font-medium' : 'text-gray-600'}>{label}</span>
@@ -474,5 +524,6 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
     </div>
   );
 }
+
 
 
