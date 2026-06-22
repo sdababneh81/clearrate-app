@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase, getActiveRateSheet, saveRateSheet, getRateSheetHistory, setActiveRateSheet, getAllProfiles, updateUserRole, updateUserActive } from '../lib/supabase.js';
+import { supabase, getActiveRateSheet, saveRateSheet, getRateSheetHistory, setActiveRateSheet, getAllProfiles, updateUserRole, updateUserActive, getMarginSettings, saveMarginSettings } from '../lib/supabase.js';
 import { parseRateSheet } from '../utils/claudeParser.js';
 
 export default function AdminPortal({ user, profile, onExit }) {
@@ -15,24 +15,49 @@ export default function AdminPortal({ user, profile, onExit }) {
   const [inviteName, setInviteName] = useState('');
   const [inviteRole, setInviteRole] = useState('lo');
   const [tempPassword, setTempPassword] = useState('');
+  const [margins, setMargins] = useState({ conventional: '', fha: '', va: '' });
+  const [savingMargins, setSavingMargins] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [sheet, history, allUsers] = await Promise.all([
+      const [sheet, history, allUsers, marginSettings] = await Promise.all([
         getActiveRateSheet(),
         getRateSheetHistory(),
         getAllProfiles(),
+        getMarginSettings().catch(() => ({ conventional: 0, fha: 0, va: 0 })),
       ]);
       setActiveSheetState(sheet);
       setSheetHistory(history);
       setUsers(allUsers);
+      setMargins({
+        conventional: marginSettings?.conventional ?? '',
+        fha: marginSettings?.fha ?? '',
+        va: marginSettings?.va ?? '',
+      });
     } catch (e) {
       setError('Error loading data: ' + e.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveMargins = async () => {
+    setSavingMargins(true); setError(''); setMessage('');
+    try {
+      const payload = {
+        conventional: parseFloat(margins.conventional) || 0,
+        fha: parseFloat(margins.fha) || 0,
+        va: parseFloat(margins.va) || 0,
+      };
+      await saveMarginSettings(payload, user.id);
+      setMessage('✅ Margins saved. New analyses will use these automatically — LOs never see them.');
+    } catch (e) {
+      setError('Could not save margins: ' + (e?.message || e) + ' — make sure the app_settings table exists (run the SQL migration).');
+    } finally {
+      setSavingMargins(false);
     }
   };
 
@@ -213,6 +238,7 @@ export default function AdminPortal({ user, profile, onExit }) {
         {/* Tabs */}
         <div className="flex gap-2 mb-6">
           {tabBtn('ratesheet', 'Rate Sheet', '📊')}
+          {tabBtn('margins', 'Margins', '💰')}
           {tabBtn('users', 'Team', '👥')}
           {tabBtn('invite', 'Add User', '➕')}
           {tabBtn('api', 'CRM Integration', '🔗')}
@@ -313,6 +339,60 @@ export default function AdminPortal({ user, profile, onExit }) {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── MARGINS TAB ── */}
+        {tab === 'margins' && (
+          <div className="space-y-5">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+              <h2 className="text-lg font-bold text-gray-900 mb-1">Branch Margins</h2>
+              <p className="text-gray-500 text-sm mb-5">
+                Set the broker margin (in basis points) per loan type. These are applied automatically to every analysis and are <span className="font-semibold text-gray-700">never shown to loan officers</span> — only managers/admins see the internal price stack. 100 BPS = 1.000%.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {[
+                  ['conventional', 'Conventional', '🏦'],
+                  ['fha', 'FHA', '🏛️'],
+                  ['va', 'VA', '🎖️'],
+                ].map(([key, label, icon]) => (
+                  <div key={key} className="border border-gray-200 rounded-xl p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xl">{icon}</span>
+                      <span className="font-semibold text-gray-800 text-sm">{label}</span>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="number" min="0" step="12.5"
+                        value={margins[key]}
+                        onChange={e => setMargins(m => ({ ...m, [key]: e.target.value }))}
+                        placeholder="e.g. 150"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-14"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-semibold">BPS</span>
+                    </div>
+                    <div className="text-xs text-gray-400 mt-1.5">
+                      {margins[key] !== '' && !isNaN(parseFloat(margins[key]))
+                        ? `${(parseFloat(margins[key]) / 100).toFixed(3)}% added to rate`
+                        : '\u00A0'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-3 mt-6">
+                <button onClick={handleSaveMargins} disabled={savingMargins}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors">
+                  {savingMargins ? 'Saving…' : 'Save Margins'}
+                </button>
+                <span className="text-xs text-gray-400">Applies to all new and reopened analyses immediately.</span>
+              </div>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800">
+              <span className="font-semibold">One-time setup:</span> if saving errors out, the <code className="font-mono bg-white px-1 rounded">app_settings</code> table doesn't exist yet — run the migration SQL in the Supabase SQL editor (project: clearrate), then reload.
+            </div>
           </div>
         )}
 
