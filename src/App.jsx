@@ -4,7 +4,7 @@ import DropZone from './components/DropZone';
 import DebtChecklist from './components/DebtChecklist';
 import AnalysisReport from './components/AnalysisReport';
 import { parseCreditReport, parseRateSheet } from './utils/claudeParser';
-import { getActiveRateSheet, saveAnalysis, getSavedAnalyses, getSavedAnalysis, deleteSavedAnalysis } from './lib/supabase.js';
+import { getActiveRateSheet, saveAnalysis, getSavedAnalyses, getSavedAnalysis, deleteSavedAnalysis, getMarginSettings } from './lib/supabase.js';
 import { analyzeDebt } from './utils/debtOptimizer';
 import { generateScenarios } from './utils/scenarioEngine';
 import { calcPI, reverseEngineerTerm } from './utils/mortgageCalc';
@@ -109,7 +109,17 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
   const [filesLoading, setFilesLoading] = useState(false);
   const adminMargins = { fha: 0.5, conv: 0.5, va: 0.375 };
 
+  // Central per-program margins (BPS), set by managers in Admin and hidden from LOs.
+  const [marginSettings, setMarginSettings] = useState({ conventional: 0, fha: 0, va: 0 });
+
   const setP = (key, val) => setProfile(p => ({ ...p, [key]: val }));
+
+  // Load the central margin settings once on mount.
+  useEffect(() => {
+    getMarginSettings()
+      .then(m => { if (m) setMarginSettings({ conventional: 0, fha: 0, va: 0, ...m }); })
+      .catch(e => console.error('[App] margin settings fetch error:', e?.message));
+  }, []);
 
   // Fetch rate sheet directly from Supabase on mount — don't rely on prop timing
   useEffect(() => {
@@ -349,6 +359,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         selectedPrograms: isVeteran ? selectedPrograms : selectedPrograms.filter(p => p !== 'VA'),
         marginBPS: parseFloat(marginBPS) || 0,
         marginDollar: parseFloat(marginDollar) || 0,
+        marginsByType: marginSettings,
         yearsInHome: parseFloat(yearsInHome) || null,
         maxPointsPct: Number.isFinite(parseFloat(maxPointsPct)) ? parseFloat(maxPointsPct) : 5.0,
         pricingStrategies,
@@ -390,6 +401,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     goalType,
     marginBPS,
     marginDollar,
+    marginsByType: marginSettings,
     maxPointsPct,
     yearsInHome,
     lenderFees,
@@ -498,6 +510,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         selectedPrograms: snap.isVeteran ? snap.selectedPrograms : (snap.selectedPrograms || []).filter(p => p !== 'VA'),
         marginBPS: parseFloat(snap.marginBPS) || 0,
         marginDollar: parseFloat(snap.marginDollar) || 0,
+        marginsByType: snap.marginsByType || marginSettings,
         yearsInHome: parseFloat(snap.yearsInHome) || null,
         maxPointsPct: Number.isFinite(parseFloat(snap.maxPointsPct)) ? parseFloat(snap.maxPointsPct) : 5.0,
         pricingStrategies: snap.pricingStrategies || ['lowest_rate', 'margin_cost', 'no_cost'],
@@ -703,10 +716,13 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
             </Card>
 
             {/* New Loan Costs */}
-            <Card title="New Loan — Charges & Margin">
+            <Card title="New Loan — Charges">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <Field label="Title & Settlement Charges" hint="Your title company fees — rolled into new loan">
                   <input className={inpHighlight} type="number" value={profile.titleCharges} onChange={e => setP('titleCharges', e.target.value)} placeholder="e.g. 3500" />
+                </Field>
+                <Field label="Lender Fees (Processing + Underwriting)" hint="Total of lender's processing and underwriting fees">
+                  <input className={inp} type="number" value={lenderFees} onChange={e => setLenderFees(e.target.value)} placeholder="e.g. 1495" />
                 </Field>
                 {!parsedRateSheet && (
                   <Field label="Manual New Rate (%)" hint="Used when no rate sheet uploaded">
@@ -715,40 +731,20 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                 )}
               </div>
 
-              {/* Margin entry */}
               <div className="mt-5 p-4 bg-amber-50 border border-amber-200 rounded-xl">
-                <div className="text-sm font-bold text-amber-800 mb-3">Your Margin</div>
-                <div className="grid grid-cols-2 gap-4">
-                  <Field label="Margin in BPS" hint="e.g. 150 = 1.5%">
-                    <input className={inp} type="number" value={marginBPS} onChange={e => handleMarginBPS(e.target.value)} placeholder="e.g. 150" />
-                </Field>
-                <Field label="Lender Fees (Processing + Underwriting)" hint="Total of lender's processing and underwriting fees">
-                    <input className={inp} type="number" value={lenderFees} onChange={e => setLenderFees(e.target.value)} placeholder="e.g. 1495" />
-                  </Field>
-                  <Field label="Margin in Dollars" hint="Auto-calculated from BPS">
-                    <input className={inp} type="number" value={marginDollar} onChange={e => handleMarginDollar(e.target.value)} placeholder="e.g. 4500" />
-                  </Field>
-                </div>
-                {marginBPS && profile.currentBalance && (
-                  <div className="mt-3 text-xs text-amber-700">
-                    {marginBPS} BPS = {(parseFloat(marginBPS)/100).toFixed(3)}% added to rate · {fmt$(parseFloat(marginDollar))} rolled into loan balance
-                  </div>
-                )}
-                <div className="mt-4 pt-4 border-t border-amber-200">
-                  <Field label="Max Points Borrower Can Pay (%)" hint="Rates requiring more points than this are excluded">
-                    <div className="flex items-center gap-3">
-                      <input className={inp} type="number" step="0.5" min="0" max="10" value={maxPointsPct} onChange={e => setMaxPointsPct(e.target.value)} placeholder="5.0" style={{maxWidth:'120px'}} />
-                      <div className="flex gap-1.5">
-                        {['0','1','2','3','5'].map(v => (
-                          <button key={v} onClick={() => setMaxPointsPct(v)}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${maxPointsPct === v ? 'border-amber-500 bg-amber-100 text-amber-800' : 'border-amber-200 text-amber-600 bg-white hover:border-amber-400'}`}>
-                            {v === '0' ? 'Par only' : `${v}%`}
-                          </button>
-                        ))}
-                      </div>
+                <Field label="Max Points Borrower Can Pay (%)" hint="Rates requiring more points than this are excluded">
+                  <div className="flex items-center gap-3">
+                    <input className={inp} type="number" step="0.5" min="0" max="10" value={maxPointsPct} onChange={e => setMaxPointsPct(e.target.value)} placeholder="5.0" style={{maxWidth:'120px'}} />
+                    <div className="flex gap-1.5">
+                      {['0','1','2','3','5'].map(v => (
+                        <button key={v} onClick={() => setMaxPointsPct(v)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${maxPointsPct === v ? 'border-amber-500 bg-amber-100 text-amber-800' : 'border-amber-200 text-amber-600 bg-white hover:border-amber-400'}`}>
+                          {v === '0' ? 'Par only' : `${v}%`}
+                        </button>
+                      ))}
                     </div>
-                  </Field>
-                </div>
+                  </div>
+                </Field>
               </div>
             </Card>
 
@@ -933,6 +929,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
             lenderFees={parseFloat(lenderFees) || 0}
             pricingStrategies={pricingStrategies}
             marginDollar={marginDollar}
+            userRole={userProfile?.role}
             companyName="Priority 1 Lending"
           />
         )}
