@@ -1,344 +1,207 @@
-import { calcPI, calcBreakeven, scoreRateOption } from './mortgageCalc';
-import { calcTotalInterest } from './debtOptimizer';
+import { calcPI, calcBreakeven, scoreRateOption, analyzeRateStack, selectRateForStrategy } from './mortgageCalc.js';
 
-/**
- * MARGIN LOGIC:
- * Broker margin (BPS) is earned as yield spread premium (YSP).
- * It does NOT get added to the note rate shown to the borrower.
- * Instead, the margin is SUBTRACTED from the lender credit (or added to points cost).
- * 
- * Example: 200 BPS margin, rate 6.000% with -0.305 net lender credit
- * → After margin: -0.305 - 2.00 = -2.305 → lender now pays 2.305% to broker
- * → Borrower still gets 6.000% rate
- * → Net to borrower: 6.000% with 0 lender credit (margin consumed the credit)
- * 
- * If margin exceeds available credit, borrower pays remaining difference as points.
- */
+const PROGRAMS_30YR = ['Conventional', 'VA', 'FHA'];
+const PROGRAMS_15YR = ['Conventional 15yr', 'VA 15yr', 'FHA 15yr'];
 
-export function generateScenarios({
-  rateSheet,
-  clientProfile,
-  selectedDebts,
-  isVeteran,
-  goalType,
-  selectedPrograms,
-  marginBPS,
-  marginDollar,
-  yearsInHome,
-  maxPointsPct,
+function matchProgram(sheetProgram, selectedProgram) {
+  const t = sheetProgram.type?.toLowerCase() || '';
+  const s = selectedProgram?.toLowerCase() || '';
+  if (s.includes('15') || s.includes('15yr')) {
+    return (t.includes('15') || t.includes('15yr')) && (
+      (s.includes('va') && t.includes('va')) ||
+      (s.includes('fha') && t.includes('fha')) ||
+      (s.includes('conv') && (t.includes('conv') || t.includes('conventional')))
+    );
+  }
+  if (t.includes('15') || t.includes('15yr')) return false;
+  if (s === 'va') return t.includes('va');
+  if (s === 'fha') return t.includes('fha');
+  if (s === 'conventional') return t.includes('conv') || t.includes('conventional');
+  return false;
+}
+
+function buildScenario({
+  rate, netPoints, program, goal, loanAmount, termYears,
+  clientProfile, selectedDebts, marginBPS, marginDollar,
+  yearsInHome, isARM = false, armInfo = null,
+  strategyTag = null, strategyLabel = null, efficiencyTag = null, efficiencyLabel = null,
 }) {
   const {
-    currentBalance,
-    currentRate,
-    currentTermRemaining,
-    estimatedValue,
-    titleCharges,
-    cashOutAmount,
-    ficoScore,
-    escrow,
-    currentPI,
+    currentBalance, currentRate, currentTermRemaining,
+    escrow = 0, titleCharges = 0, lenderFees = 0, cashOutAmount = 0,
   } = clientProfile;
 
-  const paidDebts = selectedDebts.filter(d => d.selected);
-  const debtBalanceTotal = paidDebts.reduce((s, d) => s + (d.balance || 0), 0);
-  const debtPaymentTotal = paidDebts.reduce((s, d) => s + (d.payment || 0), 0);
-  const remainingDebts = selectedDebts.filter(d => !d.selected);
-  const remainingPayments = remainingDebts.reduce((s, d) => s + (d.payment || 0), 0);
+  const marginPct = (marginBPS || 0) / 100;
+  const clientNetPoints = netPoints + marginPct;
 
-  const currentMortgagePI = currentPI || calcPI(currentBalance, currentRate, currentTermRemaining);
-  const currentEscrow = escrow || 0;
-  const currentTotalPayment = currentMortgagePI + currentEscrow + debtPaymentTotal + remainingPayments;
+  const lenderCreditPct = clientNetPoints < 0 ? Math.abs(clientNetPoints) : 0;
+  const borrowerPaysPct = clientNetPoints > 0 ? clientNetPoints : 0;
 
-  const goals = goalType === 'both' ? ['rate_term', 'cash_out'] : [goalType];
-  const scenarios = [];
+  const lenderCredit = Math.round((lenderCreditPct / 100) * loanAmount);
+  const pointsCost = Math.round((borrowerPaysPct / 100) * loanAmount);
 
-  // Margin is earned from lender — it reduces lender credit or increases points
-  // NOT added to the note rate
-  const marginPct = marginBPS ? marginBPS / 100 : 0;
+  const debtBalanceTotal = selectedDebts.filter(d => d.selected).reduce((s, d) => s + (parseFloat(d.balance) || 0), 0);
+  const debtPaymentTotal = selectedDebts.filter(d => d.selected).reduce((s, d) => s + (parseFloat(d.payment) || 0), 0);
 
-  for (const goal of goals) {
-    const cashOut = goal === 'cash_out' ? (cashOutAmount || 0) : 0;
-    const newLoanBase = currentBalance + debtBalanceTotal + (titleCharges || 0) + cashOut;
-    const newLoanAmount = newLoanBase; // margin dollar is not rolled into balance
-    const ltv = estimatedValue > 0 ? (newLoanAmount / estimatedValue) * 100 : 0;
+  const netClosingCosts = Math.round(titleCharges + lenderFees + pointsCost - lenderCredit);
+  const newLoanAmount = Math.round(currentBalance + debtBalanceTotal + titleCharges + lenderFees + (cashOutAmount || 0) + pointsCost - lenderCredit);
 
-    const programs = rateSheet?.programs || [];
-    const filteredPrograms = programs.filter(p => {
-      if (!selectedPrograms.includes(p.type)) return false;
-      if (p.type === 'VA' && !isVeteran) return false;
-      if (p.type === 'FHA' && ltv > 96.5) return false;
-      if (p.type === 'Conventional' && ltv > 97) return false;
-      return true;
-    });
+  const newPI = calcPI(newLoanAmount, rate, termYears);
+  const oldPI = calcPI(currentBalance, currentRate, currentTermRemaining);
+  const monthlySavings = Math.round((oldPI + parseFloat(debtPaymentTotal) + (parseFloat(escrow) || 0)) - (newPI + (parseFloat(escrow) || 0)));
+  const lifetimeInterestSavings = Math.round((oldPI * (currentTermRemaining * 12)) - (newPI * (termYears * 12)));
+  const breakevenMonths = calcBreakeven(netClosingCosts, monthlySavings);
 
-    // Use rate sheet programs if available, otherwise fall back to manual rate
-    const hasValidPrograms = filteredPrograms.some(p => p.rates && p.rates.length > 0);
-    const programsToRun = hasValidPrograms ? filteredPrograms : selectedPrograms.map(type => ({
-      type,
-      term: 30,
-      isARM: false,
-      rates: clientProfile.manualRate ? [{
-        rate: parseFloat(clientProfile.manualRate),
-        netPoints: 0,
-        adjustedRate: parseFloat(clientProfile.manualRate),
-      }] : [],
-      isFallback: true,
-    }));
-
-    if (programsToRun.every(p => !p.rates || p.rates.length === 0)) continue;
-
-    for (const program of programsToRun) {
-      const rawRates = program.rates || [];
-      if (rawRates.length === 0) continue;
-
-      // Normalize rate objects — handle both old and new format
-      const normalizedRates = rawRates.map(r => {
-        // Ensure we always have a valid rate number
-        const baseRate = parseFloat(r.rate) || 0;
-        if (!baseRate) return null;
-
-        // netPoints: negative = lender credit, positive = borrower pays
-        let netPoints;
-        if (r.netPoints !== undefined) {
-          netPoints = parseFloat(r.netPoints) || 0;
-        } else if (r.basePoints !== undefined) {
-          netPoints = parseFloat(r.basePoints) || 0;
-        } else {
-          // Old format: separate points and credits fields
-          netPoints = (parseFloat(r.points) || 0) - (parseFloat(r.credits) || 0);
-        }
-
-        // Apply broker margin: reduces lender credit, NOT added to note rate
-        const netPointsAfterMargin = netPoints + marginPct;
-
-        // adjustedRate = note rate (broker margin does NOT change the rate)
-        const adjustedRate = parseFloat(r.adjustedRate) || baseRate;
-
-        return {
-          rate: baseRate,
-          adjustedRate,
-          netPoints,
-          netPointsAfterMargin,
-          borrowerPays: Math.max(0, netPointsAfterMargin),
-          lenderCredit: Math.max(0, -netPointsAfterMargin),
-          isARM: program.isARM || false,
-          armType: program.armType || null,
-        };
-      }).filter(r => r !== null && r.rate > 0);
-
-      // Filter: cap borrower points at maxPointsPct (default 5%)
-      // Any rate requiring more points than the cap is excluded
-      const pointsCap = (maxPointsPct !== undefined && maxPointsPct !== null) ? maxPointsPct : 5.0;
-      const cappedRates = normalizedRates.filter(r => r.borrowerPays <= pointsCap);
-
-      // Filter: only show rates that save money vs current rate
-      // For very low current rates (< 4%), show best available anyway
-      const maxBeneficialRate = currentRate > 4.5 ? currentRate - 0.125 : 8.5;
-      const beneficialRates = cappedRates.filter(r => r.adjustedRate <= maxBeneficialRate);
-      if (beneficialRates.length === 0) continue;
-
-      const sortedRates = [...beneficialRates].sort((a, b) => a.adjustedRate - b.adjustedRate);
-
-      // Build option set:
-      // 1. Lowest rate (max monthly savings, may require points)
-      const lowestRate = sortedRates[0];
-      // 2. Best lender credit (least cash to close, slightly higher rate)
-      const maxCreditRate = [...sortedRates].sort((a, b) => b.lenderCredit - a.lenderCredit)[0];
-      // 3. Near-par (closest to zero net cost after margin)
-      const parRate = sortedRates.reduce((best, r) =>
-        Math.abs(r.netPointsAfterMargin) < Math.abs(best.netPointsAfterMargin) ? r : best,
-        sortedRates[0]
-      );
-      // 4. Smart pick: best net savings over the client's planning horizon
-      // Uses yearsInHome if provided, otherwise defaults to 5 years
-      const horizonMonths = yearsInHome ? Math.min(yearsInHome * 12, 360) : 60;
-      const smartPick = sortedRates.reduce((best, r) => {
-        const ratePI = calcPI(newLoanAmount, r.adjustedRate, 30);
-        const savings = currentTotalPayment - (ratePI + currentEscrow + remainingPayments);
-        if (savings <= 0) return best;
-        const pointsCostDollar = r.borrowerPays > 0 ? (r.borrowerPays / 100) * newLoanAmount : 0;
-        const creditDollar = r.lenderCredit > 0 ? (r.lenderCredit / 100) * newLoanAmount : 0;
-        const netCost = Math.max(0, (titleCharges || 0) + pointsCostDollar - creditDollar);
-        const horizonNet = (savings * horizonMonths) - netCost;
-
-        if (!best) return { ...r, _horizonNet: horizonNet, _savings: savings };
-        return horizonNet > best._horizonNet ? { ...r, _horizonNet: horizonNet, _savings: savings } : best;
-      }, null);
-
-      const candidates = [
-        { ...lowestRate, label: 'Best Rate', desc: 'Lowest rate — may require points' },
-        { ...parRate, label: 'Near Par', desc: 'Minimal cost to close' },
-        { ...maxCreditRate, label: 'Max Credits', desc: 'Lender credit covers closing costs' },
-        ...(smartPick ? [{ ...smartPick, label: 'Smart Pick', desc: 'Best savings vs. payback period' }] : []),
-      ];
-
-      // Deduplicate by rate
-      const seen = new Set();
-      const uniqueOptions = candidates.filter(o => {
-        const k = o.adjustedRate?.toFixed(3);
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
-
-      const programScenarios = uniqueOptions.map(opt => {
-        const rate = opt.adjustedRate;
-        const newPI = calcPI(newLoanAmount, rate, 30);
-        const newTotalPayment = newPI + currentEscrow + remainingPayments;
-        const monthlySavings = currentTotalPayment - newTotalPayment;
-
-        const pointsCostDollar = opt.borrowerPays > 0 ? Math.round((opt.borrowerPays / 100) * newLoanAmount) : 0;
-        const creditDollar = opt.lenderCredit > 0 ? Math.round((opt.lenderCredit / 100) * newLoanAmount) : 0;
-        const netClosingCosts = Math.max(0, (titleCharges || 0) + pointsCostDollar - creditDollar);
-        const breakevenMonths = calcBreakeven(netClosingCosts, monthlySavings);
-
-        const currentInterest = calcTotalInterest(currentBalance, currentRate, currentTermRemaining);
-        const newInterest = calcTotalInterest(newLoanAmount, rate, 30);
-
-        const scenario = {
-          program: program.type,
-          isARM: opt.isARM || false,
-          armType: opt.armType || null,
-          goal,
-          optionLabel: opt.label,
-          optionDesc: opt.desc,
-          rate,
-          netPointsPct: opt.netPointsAfterMargin,
-          borrowerPaysPct: opt.borrowerPays,
-          lenderCreditPct: opt.lenderCredit,
-          pointsCost: pointsCostDollar,
-          lenderCredit: creditDollar,
-          marginBPS: marginBPS || 0,
-          marginEarned: Math.round((marginPct / 100) * newLoanAmount * 100),
-          newLoanAmount: Math.round(newLoanAmount),
-          currentBalance: Math.round(currentBalance),
-          debtBalanceTotal: Math.round(debtBalanceTotal),
-          titleCharges: Math.round(titleCharges || 0),
-          cashOut,
-          newPI: Math.round(newPI),
-          newEscrow: Math.round(currentEscrow),
-          newTotalPayment: Math.round(newTotalPayment),
-          currentTotalPayment: Math.round(currentTotalPayment),
-          monthlySavings: Math.round(monthlySavings),
-          annualSavings: Math.round(monthlySavings * 12),
-          fiveYearSavings: Math.round(monthlySavings * 60),
-          netClosingCosts: Math.round(netClosingCosts),
-          breakevenMonths,
-          lifetimeInterestSavings: Math.round(currentInterest - newInterest),
-          ltv: Math.round(ltv * 10) / 10,
-          isFallback: !!program.isFallback,
-          debtPaymentTotal,
-          remainingPayments,
-          currentMortgagePI: Math.round(currentMortgagePI),
-          currentEscrow: Math.round(currentEscrow),
-          yearsInHome: yearsInHome || null,
-          horizonMonths: yearsInHome ? Math.min(yearsInHome * 12, 360) : 60,
-          horizonSavings: Math.round(monthlySavings * (yearsInHome ? Math.min(yearsInHome * 12, 360) : 60)),
-          horizonNet: Math.round((monthlySavings * (yearsInHome ? Math.min(yearsInHome * 12, 360) : 60)) - netClosingCosts),
-        };
-
-        scenario.score = scoreRateOption(scenario, yearsInHome);
-        return scenario;
-      }).filter(s => s.monthlySavings > 0);
-
-      scenarios.push(...programScenarios);
-    }
-  }
-
-  // If no ARM scenarios were generated but we have fixed ones, create estimated ARM options
-  const hasARM = scenarios.some(s => s.isARM);
-  const hasFixed = scenarios.some(s => !s.isARM);
-  
-  if (!hasARM && hasFixed) {
-    // Generate estimated 5/6 and 7/6 ARM scenarios based on typical ARM discount vs 30yr fixed
-    // ARM rates are typically 0.5-1.0% lower than 30yr fixed at same points
-    const fixedScenarios = scenarios.filter(s => !s.isARM);
-    const bestFixed = fixedScenarios.sort((a, b) => b.score - a.score)[0];
-    
-    if (bestFixed) {
-      const armTypes = [
-        { type: '5/6 SOFR ARM', rateDiscount: 0.75, desc: 'Fixed 5 yrs, adjusts every 6 mo' },
-        { type: '7/6 SOFR ARM', rateDiscount: 0.5, desc: 'Fixed 7 yrs, adjusts every 6 mo' },
-      ];
-      
-      for (const arm of armTypes) {
-        const armRate = Math.round((bestFixed.rate - arm.rateDiscount) * 1000) / 1000;
-        if (armRate <= 0) continue;
-        const goal = bestFixed.goal;
-        const newLoanAmount = bestFixed.newLoanAmount;
-        const newPI = calcPI(newLoanAmount, armRate, 30);
-        const currentEscrow = bestFixed.currentEscrow;
-        const remainingPayments = bestFixed.remainingPayments;
-        const newTotalPayment = newPI + currentEscrow + remainingPayments;
-        const monthlySavings = bestFixed.currentTotalPayment - newTotalPayment;
-        if (monthlySavings <= 0) continue;
-        
-        const netClosingCosts = bestFixed.titleCharges || 0; // assume par pricing for ARM estimate
-        const breakevenMonths = calcBreakeven(netClosingCosts, monthlySavings);
-        
-        scenarios.push({
-          ...bestFixed,
-          isARM: true,
-          armType: arm.type,
-          optionLabel: 'Best Rate',
-          optionDesc: arm.desc + ' — estimated pricing',
-          rate: armRate,
-          borrowerPaysPct: 0,
-          lenderCreditPct: 0,
-          pointsCost: 0,
-          lenderCredit: 0,
-          netClosingCosts,
-          breakevenMonths,
-          newPI: Math.round(newPI),
-          newTotalPayment: Math.round(newTotalPayment),
-          monthlySavings: Math.round(monthlySavings),
-          annualSavings: Math.round(monthlySavings * 12),
-          fiveYearSavings: Math.round(monthlySavings * 60),
-          isFallback: true,
-          horizonMonths: yearsInHome ? Math.min(yearsInHome * 12, 360) : 60,
-          horizonSavings: Math.round(monthlySavings * (yearsInHome ? Math.min(yearsInHome * 12, 360) : 60)),
-          horizonNet: Math.round((monthlySavings * (yearsInHome ? Math.min(yearsInHome * 12, 360) : 60)) - (bestFixed.titleCharges || 0)),
-          yearsInHome: yearsInHome || null,
-          score: scoreRateOption({ monthlySavings, breakevenMonths, netClosingCosts, lifetimeInterestSavings: 0 }, yearsInHome),
-        });
-      }
-    }
-  }
-
-  // Recommend best — uses composite score weighted by planning horizon.
-  // Short horizon (selling soon) → heavily favors lender credits over low rate + points.
-  // VA gets a score bonus when veteran.
-  let recommended = null;
-  if (scenarios.length > 0) {
-    recommended = scenarios.reduce((best, s) => {
-      if (!best) return s;
-
-      // Re-score with yearsInHome for accurate horizon weighting
-      const sScore = scoreRateOption(s, yearsInHome) + (s.program === 'VA' && isVeteran ? 5 : 0);
-      const bScore = scoreRateOption(best, yearsInHome) + (best.program === 'VA' && isVeteran ? 5 : 0);
-
-      return sScore > bScore ? s : best;
-    }, null);
-  }
-
-  // Detect low-rate borrower situation — helps UI show a useful message
-  const isLowRateBorrower = currentRate > 0 && currentRate < 5.5;
-  const lowRateWarning = isLowRateBorrower && scenarios.length === 0
-    ? `This borrower has a ${currentRate}% rate — refinancing to today's rates (5.5–7.5%) will increase their monthly payment unless debts are consolidated or cash-out is added. Add debts to pay off or a cash-out amount to offset the higher rate and generate beneficial scenarios.`
-    : null;
+  const score = scoreRateOption({ monthlySavings, breakevenMonths, netClosingCosts, lifetimeInterestSavings }, yearsInHome);
 
   return {
-    scenarios,
-    recommended,
-    currentTotalPayment: Math.round(currentTotalPayment),
-    currentMortgagePI: Math.round(currentMortgagePI),
-    currentEscrow: Math.round(currentEscrow),
-    debtPaymentTotal: Math.round(debtPaymentTotal),
-    remainingPayments: Math.round(remainingPayments),
-    lowRateWarning,
-    currentRate,
+    rate, netPoints, program, goal, loanAmount: newLoanAmount, termYears, isARM, armInfo,
+    lenderCreditPct, borrowerPaysPct, lenderCredit, pointsCost,
+    debtBalanceTotal, debtPaymentTotal,
+    titleCharges, lenderFees,
+    netClosingCosts, newLoanAmount, newPI, oldPI,
+    currentBalance, cashOut: cashOutAmount || 0,
+    monthlySavings, lifetimeInterestSavings, breakevenMonths, score,
+    netPointsPct: clientNetPoints,
+    strategyTag, strategyLabel, efficiencyTag, efficiencyLabel,
   };
 }
 
+/**
+ * Generate scenarios for all selected pricing strategies.
+ * Returns { strategyResults, recommended, lowRateWarning, currentRate, currentTotalPayment, currentMortgagePI, debtPaymentTotal, remainingPayments }
+ * 
+ * strategyResults: array of { strategy, strategyLabel, scenarios, recommended }
+ * For backward compatibility, also returns flat scenarios array.
+ */
+export function generateScenarios({
+  rateSheet, clientProfile, selectedDebts, isVeteran,
+  goalType, selectedPrograms, marginBPS, marginDollar,
+  yearsInHome, maxPointsPct = 5.0,
+  pricingStrategies = ['lowest_rate', 'margin_cost', 'no_cost', 'low_cost'],
+}) {
+  const {
+    currentBalance, currentRate, currentTermRemaining,
+    escrow = 0, titleCharges = 0, lenderFees = 0,
+    cashOutAmount = 0, ficoScore, estimatedValue,
+  } = clientProfile;
 
+  const STRATEGY_LABELS = {
+    lowest_rate: '📉 Lowest Rate',
+    margin_cost: '⚖️ Margin Cost',
+    no_cost:     '🎁 No Cost',
+    low_cost:    '💰 Low Cost',
+  };
 
+  const currentMortgagePI = calcPI(currentBalance, currentRate, currentTermRemaining);
+  const debtPaymentTotal = selectedDebts.filter(d => d.selected).reduce((s, d) => s + (parseFloat(d.payment) || 0), 0);
+  const currentTotalPayment = Math.round(currentMortgagePI + debtPaymentTotal + (parseFloat(escrow) || 0));
+  const remainingPayments = Math.round((currentTermRemaining || 30) * 12);
+
+  // Low rate warning
+  const lowRateWarning = parseFloat(currentRate) < 5.5 && !selectedDebts.some(d => d.selected) && !cashOutAmount
+    ? `This borrower's current rate of ${currentRate}% is well below today's market (6–7.5%). A straight rate/term refi would increase their payment. To make a refinance worthwhile, consider: (1) selecting debts to consolidate on Step 3, or (2) adding a cash-out amount.`
+    : null;
+
+  if (lowRateWarning) {
+    return { scenarios: [], strategyResults: [], recommended: null, lowRateWarning, currentRate, currentTotalPayment, currentMortgagePI, debtPaymentTotal, remainingPayments };
+  }
+
+  const goals = goalType === 'both' ? ['rate_term', 'cash_out'] : [goalType];
+  const programs = rateSheet?.programs || [];
+
+  const allScenarios = [];
+  const strategyResults = [];
+
+  for (const strategy of pricingStrategies) {
+    const strategyScenarios = [];
+
+    for (const goal of goals) {
+      const cashOut = goal === 'cash_out' ? (parseFloat(cashOutAmount) || 0) : 0;
+      const debtBalanceTotal = selectedDebts.filter(d => d.selected).reduce((s, d) => s + (parseFloat(d.balance) || 0), 0);
+      const baseLoanAmount = parseFloat(currentBalance) + debtBalanceTotal + (parseFloat(titleCharges) || 0) + (parseFloat(lenderFees) || 0) + cashOut;
+
+      const matchedPrograms = programs.filter(p =>
+        selectedPrograms.some(sp => matchProgram(p, sp))
+      );
+
+      if (!matchedPrograms.length) {
+        // Manual rate fallback
+        if (clientProfile.manualRate) {
+          const rate = parseFloat(clientProfile.manualRate);
+          const sc = buildScenario({
+            rate, netPoints: 0, program: 'Manual Rate', goal,
+            loanAmount: baseLoanAmount, termYears: 30,
+            clientProfile: { ...clientProfile, cashOutAmount: cashOut },
+            selectedDebts, marginBPS, marginDollar, yearsInHome,
+            strategyTag: strategy, strategyLabel: STRATEGY_LABELS[strategy],
+          });
+          if (sc.monthlySavings > 0) strategyScenarios.push(sc);
+        }
+        continue;
+      }
+
+      for (const program of matchedPrograms) {
+        const rawRates = program.rates || [];
+        if (!rawRates.length) continue;
+
+        const term = program.type?.includes('15') ? 15 : 30;
+
+        // Analyze the rate stack for this program
+        const analyzedRates = analyzeRateStack(rawRates, marginBPS);
+
+        // Select the best rate for this strategy
+        const selected = selectRateForStrategy(
+          analyzedRates, strategy, baseLoanAmount,
+          parseFloat(titleCharges) || 0,
+          parseFloat(lenderFees) || 0,
+          marginBPS
+        );
+
+        if (!selected) continue;
+
+        const sc = buildScenario({
+          rate: selected.adjustedRate,
+          netPoints: selected.netPoints,
+          program: program.type,
+          goal, loanAmount: baseLoanAmount, termYears: term,
+          clientProfile: { ...clientProfile, cashOutAmount: cashOut },
+          selectedDebts, marginBPS, marginDollar, yearsInHome,
+          strategyTag: strategy,
+          strategyLabel: STRATEGY_LABELS[strategy],
+          efficiencyTag: selected.tag,
+          efficiencyLabel: selected.tagLabel,
+        });
+
+        if (sc.monthlySavings > -9999) strategyScenarios.push(sc);
+      }
+    }
+
+    if (strategyScenarios.length) {
+      const best = strategyScenarios.reduce((b, s) => s.score > b.score ? s : b, strategyScenarios[0]);
+      strategyResults.push({
+        strategy,
+        strategyLabel: STRATEGY_LABELS[strategy],
+        scenarios: strategyScenarios,
+        recommended: best,
+      });
+      allScenarios.push(...strategyScenarios);
+    }
+  }
+
+  const recommended = allScenarios.length
+    ? allScenarios.reduce((b, s) => s.score > b.score ? s : b, allScenarios[0])
+    : null;
+
+  return {
+    scenarios: allScenarios,
+    strategyResults,
+    recommended,
+    lowRateWarning: null,
+    currentRate,
+    currentTotalPayment,
+    currentMortgagePI,
+    debtPaymentTotal,
+    remainingPayments,
+  };
+}
