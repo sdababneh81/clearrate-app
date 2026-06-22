@@ -622,29 +622,42 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
             </Card>
 
             <Card title="Pricing Strategy">
-              <p className="text-sm text-gray-500 mb-4">Select one or more strategies — you'll get a separate tab for each in the analysis.</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+              <p className="text-sm text-gray-500 mb-4">
+                Select one or more options. The system picks the best rate for each strategy using rate stack efficiency analysis — you'll get a separate analysis tab for each.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[
-                  ['lowest_rate','📉','Lowest Rate That Makes Sense','Best rate before the first pricing cliff. Ideal for long-term holds.'],
-                  ['margin_cost','⚖️','Margin Cost','Rate where lender credit covers your margin + all fees. Net $0 to borrower.'],
-                  ['no_cost','🎁','No Cost','Lender credit covers title + fees. Best for short-term holds or cash-strapped clients.'],
-                  ['low_cost','💰','Low Cost','Lowest rate with borrower paying ≤1% points. Balanced option.'],
-                ].map(([id, icon, label, desc]) => {
+                  { id: 'lowest_rate', icon: '📉', label: 'Lowest Rate That Makes Sense', pill: 'Best Rate', pillColor: 'bg-blue-100 text-blue-700', desc: 'Lowest rate before the first pricing cliff. Client may pay discount points. Best for long-term holds (7+ yrs).' },
+                  { id: 'margin_cost', icon: '⚖️', label: 'Margin Cost', pill: 'Zero Out-of-Pocket', pillColor: 'bg-purple-100 text-purple-700', desc: 'Rate where lender credit covers broker margin + title + lender fees. Net $0 to borrower.' },
+                  { id: 'no_cost',     icon: '🎁', label: 'No Cost', pill: 'True No Cost', pillColor: 'bg-green-100 text-green-700', desc: 'Lender credit covers ALL closing costs including title. Best for short holds (2-5 yrs) or cash-strapped clients.' },
+                  { id: 'low_cost',   icon: '💰', label: 'Low Cost', pill: '≤1% Points', pillColor: 'bg-amber-100 text-amber-700', desc: 'Lowest rate with borrower paying ≤1% in discount points. Balanced option — good rate, small cost.' },
+                ].map(({ id, icon, label, pill, pillColor, desc }) => {
                   const active = pricingStrategies.includes(id);
                   return (
                     <button key={id} onClick={() => setPricingStrategies(prev =>
                       prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
-                    )} className={`text-left p-4 rounded-xl border-2 transition-all ${active ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}>
-                      <div className="flex items-start justify-between">
-                        <div className="text-2xl mb-2">{icon}</div>
-                        {active && <CheckCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />}
+                    )} className={`text-left p-4 rounded-xl border-2 transition-all relative ${active ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-gray-200 hover:border-blue-300 bg-white'}`}>
+                      <div className={`absolute top-3 right-3 w-5 h-5 rounded-full border-2 flex items-center justify-center ${active ? 'border-blue-500 bg-blue-500' : 'border-gray-300'}`}>
+                        {active && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
                       </div>
-                      <div className="font-bold text-gray-900 text-sm">{label}</div>
-                      <div className="text-xs text-gray-500 mt-1">{desc}</div>
+                      <div className="text-2xl mb-2">{icon}</div>
+                      <div className="font-bold text-gray-900 text-sm pr-6">{label}</div>
+                      <div className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full mt-1.5 mb-2 ${pillColor}`}>{pill}</div>
+                      <div className="text-xs text-gray-500 leading-relaxed">{desc}</div>
                     </button>
                   );
                 })}
               </div>
+              {pricingStrategies.length === 0 && (
+                <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 font-semibold">
+                  ⚠️ Select at least one pricing strategy to generate the analysis.
+                </div>
+              )}
+              {pricingStrategies.length > 0 && (
+                <div className="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700">
+                  ✓ {pricingStrategies.length} {pricingStrategies.length === 1 ? 'strategy' : 'strategies'} selected — analysis will show {pricingStrategies.length === 1 ? '1 tab' : `${pricingStrategies.length} tabs`} with the optimal rate for each.
+                </div>
+              )}
             </Card>
 
             <Card title="Loan Programs">
@@ -744,6 +757,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     </div>
   );
 }
+
 
 
 
