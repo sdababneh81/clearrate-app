@@ -3,9 +3,21 @@ import { calcPI, calcBreakeven, scoreRateOption, analyzeRateStack, selectRateFor
 const PROGRAMS_30YR = ['Conventional', 'VA', 'FHA'];
 const PROGRAMS_15YR = ['Conventional 15yr', 'VA 15yr', 'FHA 15yr'];
 
+function isARMProgram(programType) {
+  const t = (programType || '').toLowerCase();
+  return t.includes('arm') || t.includes('5/6') || t.includes('7/6') || t.includes('10/6') || t.includes('sofr');
+}
+
 function matchProgram(sheetProgram, selectedProgram) {
   const t = sheetProgram.type?.toLowerCase() || '';
   const s = selectedProgram?.toLowerCase() || '';
+  
+  // Never match ARM programs to fixed-rate selections
+  const isArm = isARMProgram(sheetProgram.type);
+  
+  if (s.includes('arm')) return isArm;
+  if (isArm) return false; // ARM program won't match fixed selections
+  
   if (s.includes('15') || s.includes('15yr')) {
     return (t.includes('15') || t.includes('15yr')) && (
       (s.includes('va') && t.includes('va')) ||
@@ -146,6 +158,7 @@ export function generateScenarios({
         if (!rawRates.length) continue;
 
         const term = program.type?.includes('15') ? 15 : 30;
+        const isArm = isARMProgram(program.type);
 
         // Analyze the rate stack for this program
         const analyzedRates = analyzeRateStack(rawRates, marginBPS);
@@ -171,6 +184,8 @@ export function generateScenarios({
           strategyLabel: STRATEGY_LABELS[strategy],
           efficiencyTag: selected.tag,
           efficiencyLabel: selected.tagLabel,
+          isARM: isArm,
+          armType: isArm ? program.type : null,
         });
 
         if (sc.monthlySavings > -9999) strategyScenarios.push(sc);
@@ -205,3 +220,4 @@ export function generateScenarios({
     remainingPayments,
   };
 }
+
