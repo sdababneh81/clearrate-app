@@ -120,7 +120,7 @@ export function generateScenarios({
     : null;
 
   if (lowRateWarning) {
-    return { scenarios: [], strategyResults: [], recommended: null, lowRateWarning, currentRate, currentTotalPayment, currentMortgagePI, debtPaymentTotal, remainingPayments };
+    return { scenarios: [], strategyResults: [], recommended: null, status: 'low_rate', statusReason: lowRateWarning, lowRateWarning, currentRate, currentTotalPayment, currentMortgagePI, debtPaymentTotal, remainingPayments };
   }
 
   const goals = goalType === 'both' ? ['rate_term', 'cash_out'] : [goalType];
@@ -215,10 +215,35 @@ export function generateScenarios({
     ? allScenarios.reduce((b, s) => s.score > b.score ? s : b, allScenarios[0])
     : null;
 
+  // Determine an explicit status so the UI never lands on a blank screen.
+  // Possible: 'ok' (>=1 beneficial scenario), 'all_negative' (scenarios exist but
+  // none save money), 'no_programs' (no matching programs / empty rate sheet),
+  // 'no_scenarios' (nothing built at all).
+  let status = 'ok';
+  let statusReason = null;
+
+  if (!allScenarios.length) {
+    if (!programs.length) {
+      status = 'no_programs';
+      statusReason = 'No active rate sheet found, or the rate sheet has no programs. Upload a rate sheet in the Admin portal.';
+    } else {
+      status = 'no_scenarios';
+      statusReason = 'No rates matched the selected loan programs. Check the selected programs and that the rate sheet covers them.';
+    }
+  } else {
+    const anyBeneficial = allScenarios.some(s => s.monthlySavings > 0);
+    if (!anyBeneficial) {
+      status = 'all_negative';
+      statusReason = 'Every available rate increases the monthly payment. To make this refinance worthwhile, select debts to consolidate (Step 3) or add a cash-out amount. The scenarios below are shown for reference.';
+    }
+  }
+
   return {
     scenarios: allScenarios,
     strategyResults,
     recommended,
+    status,
+    statusReason,
     lowRateWarning: null,
     currentRate,
     currentTotalPayment,
