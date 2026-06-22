@@ -337,15 +337,19 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         maxPointsPct: parseFloat(maxPointsPct) ?? 5.0,
         pricingStrategies,
       });
-      console.log('[App] Generate result:', { scenarios: res.scenarios.length, rateSheet: !!parsedRateSheet, programs: parsedRateSheet?.programs?.length, lowRateWarning: res.lowRateWarning });
-      if (!res.scenarios.length) {
-        setError(res.lowRateWarning || 'No scenarios generated. Add debts to pay off or a cash-out amount to make the refi worthwhile, or enter a manual rate.');
-        setGenerating(false);
-        return;
-      }
-      setResult(res); setStep(4);
-    } catch (e) { setError('Error: ' + e.message); }
-    setGenerating(false);
+      console.log('[App] Generate result:', { status: res.status, scenarios: res.scenarios?.length, strategyResults: res.strategyResults?.length, rateSheet: !!parsedRateSheet, programs: parsedRateSheet?.programs?.length });
+
+      // Always advance to the analysis step with the result. The report renders the
+      // appropriate state (scenarios, low-rate guidance, all-negative notice, or a
+      // clear error) based on res.status — we never leave the user on a blank screen.
+      setResult(res);
+      setStep(4);
+      setGenerating(false);
+    } catch (e) {
+      console.error('[App] Generate failed:', e);
+      setError('Something went wrong generating the analysis: ' + (e?.message || e) + '. Please check the borrower profile and rate sheet, then try again.');
+      setGenerating(false);
+    }
   };
 
   const handleReset = () => {
