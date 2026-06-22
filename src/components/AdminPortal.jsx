@@ -40,10 +40,25 @@ export default function AdminPortal({ user, profile, onExit }) {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploadStatus('parsing'); setError(''); setMessage('');
+    console.log('[Admin] Starting rate sheet upload:', file.name);
     try {
+      // Check API key
+      const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+      if (!apiKey) throw new Error('Missing VITE_ANTHROPIC_API_KEY — check Vercel environment variables');
+
       // Parse the PDF using Claude
-      const parsed = await parseRateSheet(file, { ficoScore: 700, loanType: 'VA', purpose: 'rate/term refi' });
-      if (!parsed?.programs?.length) throw new Error('No programs found in rate sheet');
+      const parsed = await parseRateSheet(file, { 
+        ficoScore: 700, 
+        loanType: 'Conventional', 
+        purpose: 'rate/term refi',
+        ltv: 75
+      });
+      
+      console.log('[Admin] Parsed:', parsed);
+      
+      if (!parsed?.programs?.length) {
+        throw new Error('No programs found in rate sheet. Check browser console for Claude response details.');
+      }
 
       setUploadStatus('saving');
       await saveRateSheet(
@@ -54,9 +69,10 @@ export default function AdminPortal({ user, profile, onExit }) {
         user.id
       );
       setUploadStatus('done');
-      setMessage(`✅ Rate sheet uploaded: ${parsed.programs.length} programs, effective ${parsed.effectiveDate || 'today'}`);
+      setMessage(`✅ Rate sheet uploaded: ${parsed.programs.length} programs (${parsed.programs.map(p => p.type).join(', ')}), effective ${parsed.effectiveDate || 'today'}`);
       await loadData();
     } catch (e) {
+      console.error('[Admin] Upload error:', e);
       setUploadStatus('error');
       setError('Upload failed: ' + e.message);
     }
