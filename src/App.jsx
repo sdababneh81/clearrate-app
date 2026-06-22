@@ -102,6 +102,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
   // ─── Saved files (client analyses) ───────────────────────────
   const [currentFileId, setCurrentFileId] = useState(null);   // id of the loaded/saved file
   const [currentFileName, setCurrentFileName] = useState('');  // display name on screen
+  const [currentRunRef, setCurrentRunRef] = useState(null);    // human run id, e.g. CR-7F3KQX
   const [savedFiles, setSavedFiles] = useState([]);
   const [showFiles, setShowFiles] = useState(false);
   const [saveStatus, setSaveStatus] = useState('idle');        // idle | saving | saved | error
@@ -349,9 +350,11 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         marginBPS: parseFloat(marginBPS) || 0,
         marginDollar: parseFloat(marginDollar) || 0,
         yearsInHome: parseFloat(yearsInHome) || null,
-        maxPointsPct: parseFloat(maxPointsPct) ?? 5.0,
+        maxPointsPct: Number.isFinite(parseFloat(maxPointsPct)) ? parseFloat(maxPointsPct) : 5.0,
         pricingStrategies,
+        runRef: currentRunRef || undefined,
       });
+      if (res?.runRef) setCurrentRunRef(res.runRef);
       console.log('[App] Generate result:', { status: res.status, scenarios: res.scenarios?.length, strategyResults: res.strategyResults?.length, rateSheet: !!parsedRateSheet, programs: parsedRateSheet?.programs?.length });
 
       // Always advance to the analysis step with the result. The report renders the
@@ -374,7 +377,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     setIsVeteran(null); setSelectedPrograms(['Conventional','FHA']); setGoalType('rate_term');
     setMarginBPS(''); setMarginDollar(''); setYearsInHome(''); setMaxPointsPct('5');
     setCrmBadge(''); setLenderFees(''); setPricingStrategies(['lowest_rate', 'margin_cost', 'no_cost']);
-    setCurrentFileId(null); setCurrentFileName(''); setSaveStatus('idle');
+    setCurrentFileId(null); setCurrentFileName(''); setCurrentRunRef(null); setSaveStatus('idle');
   };
 
   // ─── Saved files: snapshot the full input state so a file is reproducible ──
@@ -391,6 +394,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     yearsInHome,
     lenderFees,
     pricingStrategies,
+    runRef: currentRunRef || null,
     // Snapshot the rate sheet used so the analysis can be reproduced even after
     // the active sheet changes day-to-day.
     rateSheet: parsedRateSheet,
@@ -409,6 +413,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     setYearsInHome(snap.yearsInHome ?? '');
     setLenderFees(snap.lenderFees ?? '');
     if (snap.pricingStrategies) setPricingStrategies(snap.pricingStrategies);
+    setCurrentRunRef(snap.runRef || null);
     if (snap.rateSheet) { setParsedRateSheet(snap.rateSheet); setRateSheetStatus('success'); }
   };
 
@@ -494,9 +499,11 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         marginBPS: parseFloat(snap.marginBPS) || 0,
         marginDollar: parseFloat(snap.marginDollar) || 0,
         yearsInHome: parseFloat(snap.yearsInHome) || null,
-        maxPointsPct: parseFloat(snap.maxPointsPct) ?? 5.0,
+        maxPointsPct: Number.isFinite(parseFloat(snap.maxPointsPct)) ? parseFloat(snap.maxPointsPct) : 5.0,
         pricingStrategies: snap.pricingStrategies || ['lowest_rate', 'margin_cost', 'no_cost'],
+        runRef: snap.runRef || undefined,
       });
+      if (res?.runRef) setCurrentRunRef(res.runRef);
       setResult(res);
     } catch (e) {
       console.error('[Files] regenerate failed:', e);
@@ -950,6 +957,11 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
           )}
           {step === 4 && (
             <div className="flex items-center gap-2">
+              {(result?.runRef || currentRunRef) && (
+                <span className="font-mono text-xs font-semibold text-gray-500 bg-gray-100 border border-gray-200 rounded-lg px-2.5 py-1.5" title="Run reference — use this to find this analysis later">
+                  {result?.runRef || currentRunRef}
+                </span>
+              )}
               <button onClick={handleSaveFile} disabled={saveStatus === 'saving'}
                 className="flex items-center gap-2 px-5 py-2.5 bg-white border border-blue-300 text-blue-700 rounded-xl text-sm font-semibold hover:bg-blue-50 transition-colors disabled:opacity-50">
                 <Save className="w-4 h-4" />
@@ -994,6 +1006,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                         <div className="font-semibold text-sm text-gray-900 truncate">{f.file_name}</div>
                         <div className="text-xs text-gray-400">
                           {f.borrower_name} · updated {new Date(f.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          {f.snapshot?.runRef ? <span className="font-mono text-gray-400"> · {f.snapshot.runRef}</span> : null}
                         </div>
                       </div>
                       <button onClick={() => handleOpenFile(f.id, { edit: false })}
@@ -1019,6 +1032,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     </div>
   );
 }
+
 
 
 
