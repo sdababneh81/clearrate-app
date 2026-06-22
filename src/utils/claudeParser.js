@@ -1,5 +1,6 @@
 /**
  * ClearRate — Claude API PDF Parser
+ * Two-step parse: (1) extract rate table + LLPA grid, (2) apply adjustments
  */
 
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
@@ -15,7 +16,6 @@ async function fileToBase64(file) {
 
 export async function parseCreditReport(file) {
   let content;
-
   if (file.type === 'application/pdf') {
     const base64 = await fileToBase64(file);
     content = [
@@ -65,163 +65,204 @@ Rules: only open tradelines balance>0 payment>0, skip mortgage (put in mortgage 
   catch (e) { throw new Error('Could not parse credit report. Raw: ' + raw.substring(0, 300)); }
 }
 
+/**
+ * Parse rate sheet PDF in two calls:
+ * Call 1: Extract raw base prices (no LLPA) + the full LLPA adjustment grid
+ * Call 2: Apply the right LLPA hits for this borrower and build final prices
+ */
 export async function parseRateSheet(file, clientProfile, adminMargins = {}) {
-  const { ficoScore, ltv, loanType, purpose, currentRate } = clientProfile || {};
-
-  const borrowerContext = ficoScore
-    ? `Borrower profile: FICO ${ficoScore}, LTV ${ltv || 'unknown'}%, loan type ${loanType || 'Conventional'}, purpose ${purpose || 'rate/term refi'}${currentRate ? `, current rate ${currentRate}%` : ''}.`
-    : '';
-
-  // Two-call strategy:
-  // Call 1: Extract raw rate data as a simple text table (Claude won't narrate this)
-  // Call 2: Convert that text to JSON (small, structured, can't fail)
-  // This sidesteps the "thinking out loud" problem entirely.
-
-  let rawTableContent;
-  if (file.type === 'application/pdf') {
-    const base64 = await fileToBase64(file);
-    rawTableContent = [
-      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
-      {
-        type: 'text',
-        text: `${borrowerContext}
-
-From this rate sheet, extract a pipe-delimited table of ALL rate rows.
-Apply FICO and LTV LLPA adjustments from the pricing adjustment tables.
-
-Output ONLY this table, no other text:
-
-PROGRAM|ARM|ARM_TYPE|RATE|NET_POINTS
-Conventional|false||6.500|-0.250
-Conventional|false||6.750|0.125
-VA|false||6.250|-1.500
-VA|true|5/6 SOFR|5.875|-0.750
-
-Rules:
-- PROGRAM: VA, Conventional, or FHA only
-- NET_POINTS: 30-day lock base price PLUS FICO and LTV adjustments. Negative=credit, Positive=borrower pays.
-- Include ALL rate rows for each program
-- First line must be the header exactly as shown above`
-      }
-    ];
-  } else {
-    const text = await file.text();
-    rawTableContent = [{ type: 'text', text: `${borrowerContext}\n\nExtract rate table from this rate sheet as pipe-delimited with header PROGRAM|ARM|ARM_TYPE|RATE|NET_POINTS. Apply LLPAs. One row per rate.\n\n${text.substring(0, 15000)}` }];
-  }
+  const { ficoScore, ltv, loanType, purpose, currentRate, estimatedValue, currentBalance, cashOutAmount } = clientProfile || {};
 
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
-  console.log('[ClearRate] Step 1: Extracting rate table...', { borrowerContext });
+  if (!apiKey) throw new Error('Missing VITE_ANTHROPIC_API_KEY');
+
+  let pdfContent = null;
+  if (file.type === 'application/pdf') {
+    const base64 = await fileToBase64(file);
+    pdfContent = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } };
+  }
+
+  // ── CALL 1: Extract base prices AND LLPA grid from PDF ─────────────────────
+  console.log('[Parser] Step 1: Extracting base rates and LLPA grid...');
+
+  const call1Content = pdfContent
+    ? [
+        pdfContent,
+        {
+          type: 'text',
+          text: `Extract two things from this UWM rate sheet PDF:
+
+1. BASE RATE PRICES — the raw 30-day lock prices BEFORE any LLPA adjustments
+2. LLPA ADJUSTMENT GRID — all the pricing hit tables (credit score, LTV, cash-out, loan type, etc.)
+
+Return ONLY valid JSON, no markdown, no explanation:
+
+{
+  "effectiveDate": "string or empty",
+  "programs": [
+    {
+      "type": "VA|Conventional|FHA",
+      "isARM": false,
+      "armType": null,
+      "term": 30,
+      "rates": [
+        { "rate": 6.500, "basePoints": -0.250 }
+      ]
+    }
+  ],
+  "llpaGrid": {
+    "creditScore": [
+      { "min": 740, "max": 759, "adjustments": { "ltv_60": 0.000, "ltv_65": 0.000, "ltv_70": 0.250, "ltv_75": 0.250, "ltv_80": 0.500, "ltv_85": 0.500, "ltv_90": 0.750, "ltv_95": 0.750, "ltv_97": 0.750 } }
+    ],
+    "cashOut": [
+      { "ltv_min": 0, "ltv_max": 60, "hit": 0.000 },
+      { "ltv_min": 60.01, "ltv_max": 70, "hit": 0.500 },
+      { "ltv_min": 70.01, "ltv_max": 75, "hit": 0.750 },
+      { "ltv_min": 75.01, "ltv_max": 80, "hit": 1.500 }
+    ],
+    "otherHits": [
+      { "description": "Investment Property", "hit": 1.750 },
+      { "description": "2-unit property", "hit": 1.000 }
+    ]
+  }
+}
+
+Rules:
+- basePoints: the raw price from the rate table, negative = credit, positive = cost
+- Include ALL rates for each program
+- For the LLPA grid, extract every adjustment table you can find
+- If a table doesn't exist in the PDF, omit that key
+- For VA loans, note if there are separate grids`
+        }
+      ]
+    : [{ type: 'text', text: `Extract base rates and LLPA grid from this rate sheet. Return JSON with programs[{type,isARM,armType,term,rates[{rate,basePoints}]}] and llpaGrid{creditScore,cashOut,otherHits}. ${(await file.text()).substring(0, 15000)}` }];
 
   const r1 = await fetch(CLAUDE_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4000, messages: [{ role: 'user', content: rawTableContent }] })
+    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 6000, messages: [{ role: 'user', content: call1Content }] })
   });
 
   if (!r1.ok) throw new Error(`Rate sheet API error ${r1.status}: ${(await r1.text()).substring(0, 200)}`);
-
   const d1 = await r1.json();
-  const tableText = d1.content.map(b => b.text || '').join('').trim();
-  console.log('[ClearRate] Step 1 table output:', tableText.substring(0, 800));
+  const raw1 = d1.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
 
-  // Parse the pipe-delimited table into a programs structure
-  const parsed = parseTableToPrograms(tableText);
+  let extracted;
+  try { extracted = JSON.parse(raw1); }
+  catch (e) { throw new Error('Could not parse rate sheet step 1. Raw: ' + raw1.substring(0, 400)); }
 
-  if (!parsed.programs || parsed.programs.length === 0) {
-    console.error('[ClearRate] No programs parsed from table. Raw table:', tableText);
-    throw new Error('No rate programs found in rate sheet. Raw: ' + tableText.substring(0, 300));
-  }
+  console.log('[Parser] Step 1 done:', {
+    programs: extracted.programs?.length,
+    hasLLPA: !!extracted.llpaGrid,
+    llpaKeys: Object.keys(extracted.llpaGrid || {}),
+  });
 
-  console.log('[ClearRate] ✅ Rate sheet parsed:',
-    parsed.programs.map(p => `${p.type} ${p.isARM ? (p.armType || 'ARM') : 'fixed'} (${p.rates.length} rates)`).join(' | '));
-  console.log('[ClearRate] Full output:', JSON.stringify(parsed, null, 2));
+  // ── CALL 2: Apply LLPA hits for THIS specific borrower ─────────────────────
+  const computedLTV = (ltv !== undefined && ltv !== null)
+    ? parseFloat(ltv)
+    : (estimatedValue && currentBalance)
+      ? Math.round((parseFloat(currentBalance) / parseFloat(estimatedValue)) * 1000) / 10
+      : null;
 
-  return parsed;
-}
+  const isCashOut = purpose?.toLowerCase().includes('cash') || parseFloat(cashOutAmount) > 0;
 
-/**
- * Parse pipe-delimited table output into programs structure.
- * Handles Claude adding explanation before/after the table.
- */
-function parseTableToPrograms(text) {
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  console.log('[Parser] Step 2: Applying LLPAs for borrower:', {
+    ficoScore, ltv: computedLTV, loanType, isCashOut
+  });
 
-  // Find the header line
-  const headerIdx = lines.findIndex(l =>
-    l.toUpperCase().includes('PROGRAM') && l.includes('|') && l.toUpperCase().includes('RATE')
-  );
+  const borrowerDesc = `
+Borrower profile:
+- FICO score: ${ficoScore || 'unknown'}
+- LTV: ${computedLTV !== null ? computedLTV + '%' : 'unknown'}
+- Loan type: ${loanType || 'Conventional'}
+- Purpose: ${isCashOut ? 'Cash-Out Refinance' : 'Rate/Term Refinance'}
+- Property: Single Family Residence, Primary Residence
+`;
 
-  if (headerIdx === -1) {
-    // Fallback: try to parse any line with pipe-delimited numbers
-    return parseFallback(text);
-  }
+  const call2Content = [
+    {
+      type: 'text',
+      text: `You have a UWM rate sheet with base prices and LLPA adjustment grids.
 
-  const dataLines = lines.slice(headerIdx + 1).filter(l => l.includes('|') && !l.match(/^[-|]+$/));
+Here is the extracted rate sheet data:
+${JSON.stringify(extracted, null, 2)}
 
-  const programMap = {};
+${borrowerDesc}
 
-  for (const line of dataLines) {
-    const parts = line.split('|').map(s => s.trim());
-    if (parts.length < 4) continue;
+Calculate the FINAL net price for each rate by applying ALL applicable LLPA hits for this borrower.
 
-    const [programRaw, armRaw, armType, rateRaw, netPointsRaw] = parts;
+Return ONLY valid JSON, no markdown:
 
-    // Normalize program type
-    let type = programRaw.trim();
-    if (/va/i.test(type)) type = 'VA';
-    else if (/fha/i.test(type)) type = 'FHA';
-    else if (/conv/i.test(type)) type = 'Conventional';
-    else continue; // skip unknown programs
-
-    const isARM = armRaw?.toLowerCase() === 'true';
-    const rate = parseFloat(rateRaw);
-    const netPoints = parseFloat(netPointsRaw);
-
-    if (!rate || isNaN(rate) || isNaN(netPoints)) continue;
-
-    const key = `${type}|${isARM}|${armType || ''}`;
-    if (!programMap[key]) {
-      programMap[key] = { type, term: 30, isARM, armType: armType || null, rates: [] };
+{
+  "effectiveDate": "string",
+  "borrowerLLPAs": [
+    { "description": "Credit Score 680-699 / LTV 54%", "hit": 0.250 },
+    { "description": "Cash-Out Refinance / LTV ≤60%", "hit": 0.000 }
+  ],
+  "totalLLPAHit": 0.250,
+  "programs": [
+    {
+      "type": "VA",
+      "isARM": false,
+      "armType": null,
+      "term": 30,
+      "rates": [
+        {
+          "rate": 6.500,
+          "basePoints": -1.500,
+          "llpaHit": 0.250,
+          "netPoints": -1.250
+        }
+      ]
     }
-    programMap[key].rates.push({ rate, netPoints, adjustedRate: rate });
-  }
-
-  const programs = Object.values(programMap).filter(p => p.rates.length > 0);
-  return { programs, effectiveDate: '', llpasApplied: [] };
+  ]
 }
 
-/**
- * Fallback parser: extract any rate-like data from free-form text.
- */
-function parseFallback(text) {
-  const programs = [];
-  const seen = new Set();
+Rules:
+- basePoints: from the rate sheet (before LLPA)
+- llpaHit: sum of all applicable adjustments for this borrower (positive = cost)
+- netPoints: basePoints + llpaHit (this is what the borrower effectively pays/receives)
+- Apply EVERY applicable hit: credit score + LTV combination, cash-out, property type, etc.
+- If VA loan, apply VA-specific grids if present
+- List each hit separately in borrowerLLPAs so the LO can see exactly what was applied`
+    }
+  ];
 
-  // Look for patterns like "6.500  -1.250" or "6.500 | -1.250" or "6.500: -1.25 points"
-  const ratePattern = /\b(\d\.\d{3,4})\s*[|:]?\s*(-?\d+\.?\d*)\s*(?:pts?|points?|credit)?/gi;
-  const matches = [...text.matchAll(ratePattern)];
+  const r2 = await fetch(CLAUDE_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 6000, messages: [{ role: 'user', content: call2Content }] })
+  });
 
-  if (matches.length === 0) return { programs: [], effectiveDate: '', llpasApplied: [] };
+  if (!r2.ok) throw new Error(`Rate sheet LLPA apply error ${r2.status}: ${(await r2.text()).substring(0, 200)}`);
+  const d2 = await r2.json();
+  const raw2 = d2.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
 
-  // Determine dominant program type from text
-  const isVA = /\bva\b/i.test(text);
-  const isFHA = /\bfha\b/i.test(text);
-  const type = isVA ? 'VA' : isFHA ? 'FHA' : 'Conventional';
+  let final;
+  try { final = JSON.parse(raw2); }
+  catch (e) { throw new Error('Could not parse rate sheet step 2. Raw: ' + raw2.substring(0, 400)); }
 
-  const rates = [];
-  for (const m of matches) {
-    const rate = parseFloat(m[1]);
-    const netPoints = parseFloat(m[2]);
-    if (rate < 3 || rate > 12 || isNaN(netPoints)) continue;
-    const key = rate.toFixed(3);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rates.push({ rate, netPoints, adjustedRate: rate });
-  }
+  console.log('[Parser] Step 2 done:', {
+    programs: final.programs?.length,
+    totalLLPAHit: final.totalLLPAHit,
+    llpaHits: final.borrowerLLPAs,
+  });
 
-  if (rates.length > 0) {
-    programs.push({ type, term: 30, isARM: false, armType: null, rates });
-  }
-
-  return { programs, effectiveDate: '', llpasApplied: ['fallback-parser'] };
+  // Normalize output to match what scenarioEngine expects
+  return {
+    programs: (final.programs || []).map(p => ({
+      ...p,
+      rates: (p.rates || []).map(r => ({
+        rate: parseFloat(r.rate),
+        netPoints: parseFloat(r.netPoints ?? r.basePoints),
+        basePoints: parseFloat(r.basePoints),
+        llpaHit: parseFloat(r.llpaHit || 0),
+        adjustedRate: parseFloat(r.rate),
+      })).filter(r => !isNaN(r.rate) && !isNaN(r.netPoints)),
+    })).filter(p => p.rates.length > 0),
+    effectiveDate: final.effectiveDate || extracted.effectiveDate || '',
+    borrowerLLPAs: final.borrowerLLPAs || [],
+    totalLLPAHit: final.totalLLPAHit || 0,
+    llpasApplied: (final.borrowerLLPAs || []).map(h => h.description),
+  };
 }
