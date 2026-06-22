@@ -69,13 +69,29 @@ function Root() {
     try {
       const prof = await getProfile(sess.user.id)
       setProfile(prof)
-      // Load active rate sheet for all users
-      const sheet = await getActiveRateSheet()
-      setActiveRateSheet(sheet)
     } catch (e) {
       console.error('Profile load error:', e)
     }
+    // Load rate sheet separately so profile error doesn't block it
+    try {
+      console.log('[Main] Loading active rate sheet...')
+      const sheet = await getActiveRateSheet()
+      console.log('[Main] Rate sheet loaded:', sheet ? `${sheet.programs?.length} programs` : 'none')
+      setActiveRateSheet(sheet)
+    } catch (e) {
+      console.error('[Main] Rate sheet load error:', e)
+    }
     setAuthState('authenticated')
+  }
+
+  const reloadRateSheet = async () => {
+    try {
+      const sheet = await getActiveRateSheet()
+      setActiveRateSheet(sheet)
+      console.log('[Main] Rate sheet reloaded:', sheet?.programs?.length, 'programs')
+    } catch (e) {
+      console.error('[Main] Rate sheet reload error:', e)
+    }
   }
 
   // Listen for postMessage from parent CRM window (iframe mode)
@@ -125,7 +141,7 @@ function Root() {
       isIframe={isIframe}
       onOpenAdmin={profile?.role === 'admin' ? () => setView('admin') : null}
       onSignOut={() => supabase.auth.signOut()}
-      onRateSheetUpdate={setActiveRateSheet}
+      onRateSheetUpdate={reloadRateSheet}
     />
   )
 }
@@ -135,3 +151,4 @@ createRoot(document.getElementById('root')).render(
     <Root />
   </StrictMode>
 )
+
