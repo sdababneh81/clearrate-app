@@ -502,8 +502,9 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
 
                 {/* Price Stack Table */}
                 <div className="bg-white rounded-xl border border-blue-200 overflow-hidden">
-                  <div className="bg-blue-700 px-4 py-2">
+                  <div className="bg-blue-700 px-4 py-2 flex items-center justify-between">
                     <div className="text-xs font-bold text-blue-100 uppercase tracking-wider">Price Stack — {s.program} {s.rate?.toFixed(3)}%</div>
+                    <div className="text-xs text-blue-300">{s.isARM ? (s.armType || 'ARM') : '30-Year Fixed'}</div>
                   </div>
                   <table className="w-full text-sm">
                     <thead>
@@ -511,38 +512,86 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                         <th className="text-left px-4 py-2 text-xs font-semibold text-blue-600">Item</th>
                         <th className="text-right px-4 py-2 text-xs font-semibold text-blue-600">Points %</th>
                         <th className="text-right px-4 py-2 text-xs font-semibold text-blue-600">Dollar</th>
-                        <th className="text-left px-4 py-2 text-xs font-semibold text-blue-600 hidden sm:table-cell">Note</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {priceRows.map((row, i) => (
-                        <tr key={i} className={`border-b border-blue-50 ${
-                          row.style === 'final' ? 'bg-blue-50 font-bold' :
-                          row.style === 'margin' ? 'bg-amber-50' : ''
-                        }`}>
-                          <td className={`px-4 py-2.5 font-medium ${
-                            row.style === 'final' ? 'text-blue-900' :
-                            row.style === 'margin' ? 'text-amber-800' : 'text-gray-700'
-                          }`}>{row.label}</td>
-                          <td className={`px-4 py-2.5 text-right font-mono font-bold ${
-                            row.style === 'credit' || (row.style === 'final' && s.lenderCreditPct > 0) ? 'text-green-700' :
-                            row.style === 'cost' || (row.style === 'final' && s.borrowerPaysPct > 0) ? 'text-red-600' :
-                            row.style === 'margin' ? 'text-amber-700' :
-                            row.style === 'final' ? 'text-blue-700' : 'text-gray-900'
-                          }`}>{row.value}</td>
-                          <td className={`px-4 py-2.5 text-right font-mono text-xs ${
-                            row.style === 'credit' || (row.style === 'final' && s.lenderCreditPct > 0) ? 'text-green-600' :
-                            row.style === 'cost' || (row.style === 'final' && s.borrowerPaysPct > 0) ? 'text-red-500' :
-                            row.style === 'margin' ? 'text-amber-600' : 'text-gray-500'
-                          }`}>{row.dollar || '—'}</td>
-                          <td className="px-4 py-2.5 text-xs text-gray-400 hidden sm:table-cell">{row.note}</td>
-                        </tr>
-                      ))}
+                      {/* Base price from rate sheet */}
+                      <tr className="border-b border-blue-50">
+                        <td className="px-4 py-2.5 text-gray-700 font-medium">
+                          Base Price (rate sheet, 30-day lock)
+                          <div className="text-xs text-gray-400 font-normal">before LLPA adjustments</div>
+                        </td>
+                        <td className={`px-4 py-2.5 text-right font-mono font-bold ${(s.basePoints ?? baseNetPoints) <= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                          {((s.basePoints ?? baseNetPoints) <= 0 ? '' : '+')}{(s.basePoints ?? baseNetPoints).toFixed(3)}%
+                        </td>
+                        <td className={`px-4 py-2.5 text-right font-mono text-xs ${(s.basePoints ?? baseNetPoints) <= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                          {(s.basePoints ?? baseNetPoints) <= 0 ? '-' : '+'}{money(Math.abs((s.basePoints ?? baseNetPoints) / 100 * s.newLoanAmount))}
+                        </td>
+                      </tr>
+                      {/* LLPA hits */}
+                      {(s.llpaHits?.length > 0) ? (
+                        s.llpaHits.map((hit, i) => (
+                          <tr key={i} className="border-b border-orange-50 bg-orange-50">
+                            <td className="px-4 py-2 text-orange-800 text-xs font-medium">⚡ LLPA: {hit.description}</td>
+                            <td className={`px-4 py-2 text-right font-mono text-xs font-bold ${hit.hit <= 0 ? 'text-green-700' : 'text-orange-700'}`}>
+                              {hit.hit <= 0 ? '' : '+'}{hit.hit.toFixed(3)}%
+                            </td>
+                            <td className={`px-4 py-2 text-right font-mono text-xs ${hit.hit <= 0 ? 'text-green-600' : 'text-orange-600'}`}>
+                              {hit.hit <= 0 ? '-' : '+'}{money(Math.abs(hit.hit / 100 * s.newLoanAmount))}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (() => {
+                        const llpaTotal = baseNetPoints - (s.basePoints ?? baseNetPoints);
+                        return llpaTotal !== 0 ? (
+                          <tr className="border-b border-orange-50 bg-orange-50">
+                            <td className="px-4 py-2 text-orange-800 text-xs font-medium">
+                              ⚡ LLPA Adjustments (FICO {clientProfile?.ficoScore}, LTV ~{Math.round((clientProfile?.currentBalance / clientProfile?.estimatedValue) * 100)}%, {s.goal === 'cash_out' ? 'Cash-Out' : 'Rate/Term'})
+                            </td>
+                            <td className={`px-4 py-2 text-right font-mono text-xs font-bold ${llpaTotal <= 0 ? 'text-green-700' : 'text-orange-700'}`}>
+                              {llpaTotal <= 0 ? '' : '+'}{llpaTotal.toFixed(3)}%
+                            </td>
+                            <td className={`px-4 py-2 text-right font-mono text-xs ${llpaTotal <= 0 ? 'text-green-600' : 'text-orange-600'}`}>
+                              {llpaTotal <= 0 ? '-' : '+'}{money(Math.abs(llpaTotal / 100 * s.newLoanAmount))}
+                            </td>
+                          </tr>
+                        ) : null;
+                      })()}
+                      {/* Net lender price subtotal */}
+                      <tr className="border-b-2 border-blue-200 bg-gray-50">
+                        <td className="px-4 py-2.5 text-gray-800 font-semibold text-xs uppercase tracking-wide">Net Lender Price (after LLPAs)</td>
+                        <td className={`px-4 py-2.5 text-right font-mono font-bold ${baseNetPoints <= 0 ? 'text-green-700' : 'text-amber-700'}`}>
+                          {baseNetPoints <= 0 ? '' : '+'}{baseNetPoints.toFixed(3)}%
+                        </td>
+                        <td className={`px-4 py-2.5 text-right font-mono text-xs ${baseNetPoints <= 0 ? 'text-green-600' : 'text-amber-600'}`}>
+                          {baseNetPoints <= 0 ? '-' : '+'}{money(Math.abs(baseNetPoints / 100 * s.newLoanAmount))}
+                        </td>
+                      </tr>
+                      {/* Broker margin */}
+                      <tr className="border-b border-amber-100 bg-amber-50">
+                        <td className="px-4 py-2.5 text-amber-800 font-medium">
+                          Broker Margin ({marginBPS} BPS)
+                          <div className="text-xs text-amber-600 font-normal">your compensation — added to price</div>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono font-bold text-amber-700">+{brokerMarginPct.toFixed(3)}%</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-xs text-amber-600">+{money(marginDollarAmt)}</td>
+                      </tr>
+                      {/* Final client price */}
+                      <tr className="bg-blue-50 font-bold">
+                        <td className="px-4 py-3 text-blue-900 font-bold">
+                          Final Client Price
+                          <div className="text-xs font-normal text-blue-600">{s.lenderCreditPct > 0 ? 'credit toward closing costs' : s.borrowerPaysPct > 0 ? 'charged as discount points' : 'no cost, no credit — par'}</div>
+                        </td>
+                        <td className={`px-4 py-3 text-right font-mono font-bold text-base ${s.lenderCreditPct > 0 ? 'text-green-700' : s.borrowerPaysPct > 0 ? 'text-red-600' : 'text-blue-700'}`}>
+                          {s.lenderCreditPct > 0 ? `-${s.lenderCreditPct.toFixed(3)}%` : s.borrowerPaysPct > 0 ? `+${s.borrowerPaysPct.toFixed(3)}%` : '0.000%'}
+                        </td>
+                        <td className={`px-4 py-3 text-right font-mono font-bold ${s.lenderCreditPct > 0 ? 'text-green-700' : s.borrowerPaysPct > 0 ? 'text-red-600' : 'text-blue-700'}`}>
+                          {s.lenderCreditPct > 0 ? `-${money(s.lenderCredit)}` : s.borrowerPaysPct > 0 ? `+${money(s.pointsCost)}` : '$0'}
+                        </td>
+                      </tr>
                     </tbody>
                   </table>
                 </div>
-
-                {/* YSP Summary */}
                 <div className="grid grid-cols-3 gap-3">
                   <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
                     <div className="text-xs text-blue-500 font-semibold uppercase mb-1">Rate</div>
@@ -616,6 +665,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
     </div>
   );
 }
+
 
 
 
