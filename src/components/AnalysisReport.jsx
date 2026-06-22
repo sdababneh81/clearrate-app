@@ -184,13 +184,13 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
   const s = activeScenario || result.recommended;
   if (!s) return (
     <div className="space-y-4 p-2">
-      {lowRateWarning ? (
+      {(lowRateWarning || result.status === 'low_rate') ? (
         <div className="bg-amber-50 border border-amber-300 rounded-2xl p-5">
           <div className="flex items-start gap-3">
             <span className="text-2xl">📉</span>
             <div>
               <div className="font-bold text-amber-900 text-base mb-1">Low Rate Borrower — Refi Requires Justification</div>
-              <div className="text-amber-800 text-sm leading-relaxed">{lowRateWarning}</div>
+              <div className="text-amber-800 text-sm leading-relaxed">{lowRateWarning || result.statusReason}</div>
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                 <div className="bg-white rounded-lg p-2.5 border border-amber-200"><div className="font-semibold text-amber-700 mb-1">Current Rate</div><div className="text-2xl font-bold text-amber-900">{resultCurrentRate}%</div><div className="text-amber-600">Today's market: 6–7.5%</div></div>
                 <div className="bg-white rounded-lg p-2.5 border border-amber-200"><div className="font-semibold text-amber-700 mb-1">Best Path Forward</div><div className="font-bold text-amber-900">Debt Consolidation</div><div className="text-amber-600">Freed payments offset higher rate</div></div>
@@ -199,10 +199,15 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
             </div>
           </div>
         </div>
+      ) : result.status === 'no_programs' ? (
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-5">
+          <div className="font-bold text-red-700 mb-1">No rate sheet programs found</div>
+          <div className="text-red-500 text-sm">{result.statusReason}</div>
+        </div>
       ) : (
-        <div className="bg-red-50 border border-red-200 rounded-2xl p-5 text-center">
-          <div className="text-red-500 font-semibold mb-1">No scenarios could be generated</div>
-          <div className="text-red-400 text-sm">Check that a rate sheet is uploaded and borrower profile is complete.</div>
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
+          <div className="font-bold text-amber-800 mb-1">No scenarios to display</div>
+          <div className="text-amber-600 text-sm">{result.statusReason || 'Try selecting debts to consolidate on Step 3, adding a cash-out amount, or adjusting the selected loan programs.'}</div>
         </div>
       )}
     </div>
@@ -215,6 +220,17 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
 
   return (
     <div className="space-y-5">
+
+      {/* All-negative savings banner — scenarios exist but none save money */}
+      {result.status === 'all_negative' && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-start gap-3">
+          <span className="text-xl">⚠️</span>
+          <div>
+            <div className="font-bold text-amber-900 text-sm mb-0.5">No payment savings at current settings</div>
+            <div className="text-amber-700 text-xs leading-relaxed">{result.statusReason}</div>
+          </div>
+        </div>
+      )}
 
       {/* Print button */}
       <div className="flex justify-end">
