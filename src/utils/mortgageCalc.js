@@ -45,11 +45,11 @@ export function calcBreakeven(netCost, monthlySavings) {
  */
 export function analyzeRateStack(rates, marginBPS = 0) {
   const marginPct = marginBPS / 100;
-  const CLIFF_THRESHOLD = 0.50;  // pts per 0.125% — cliff if step exceeds this
-  const GOOD_THRESHOLD = 0.35;   // pts per 0.125% — good value below this
-  const MARGINAL_THRESHOLD = 0.50; // pts per 0.125% — marginal below this
+  const STEP_CLIFF = 0.50;        // single-step pts per 0.125% — above this is a cliff
+  const GOOD_THRESHOLD = 0.30;    // step pts per 0.125% — strong value at or below this
+  const MARGINAL_THRESHOLD = 0.50; // step — marginal up to here
 
-  // Apply margin, sort highest rate first
+  // Apply margin, sort highest rate first (so we walk DOWN the stack)
   const sorted = rates
     .map(r => ({
       ...r,
@@ -61,15 +61,15 @@ export function analyzeRateStack(rates, marginBPS = 0) {
 
   if (!sorted.length) return [];
 
-  // Find anchor = rate with best (most negative) client points
+  // Anchor = rate with best (most negative) client points — the "free money" rate
   const anchor = sorted.reduce((best, r) =>
     r.clientPoints < best.clientPoints ? r : best, sorted[0]);
 
-  // First pass: compute step and cumulative efficiency
+  // First pass: compute step efficiency (vs adjacent) and cumulative efficiency (from anchor)
   const withEff = sorted.map((r, i) => {
     const stepEff = i === 0 ? null : (() => {
       const prev = sorted[i - 1];
-      const delta = r.clientPoints - prev.clientPoints;
+      const delta = r.clientPoints - prev.clientPoints;   // positive = costs more going down
       const rateDrop = prev.adjustedRate - r.adjustedRate;
       return rateDrop > 0 ? (delta / rateDrop) * 0.125 : null;
     })();
@@ -83,40 +83,42 @@ export function analyzeRateStack(rates, marginBPS = 0) {
     return { ...r, stepEff, cumEff, isAnchor: r.adjustedRate === anchor.adjustedRate };
   });
 
-  // Second pass: detect cliffs and assign zones
-  let inCliff = false;
-  let cliffCount = 0;
+  // Second pass: walk DOWN from the anchor. Use STEP efficiency (cost to buy down
+  // the next 0.125%) for both cliff detection and value grading.
+  // A cliff = a single step costing more than STEP_CLIFF pts per 0.125%.
+  // Once we cross a cliff, everything below is Zone C (overpriced).
+  let pastCliff = false;
 
-  return withEff.map((r, i) => {
-    // Cliff detection: step efficiency > threshold AND it's a large jump
-    const isCliff = r.stepEff !== null && r.stepEff > CLIFF_THRESHOLD;
-    if (isCliff) { inCliff = true; cliffCount++; }
+  return withEff.map((r) => {
+    const stepEff = r.stepEff; // cost per 0.125% vs the rate just above this one
 
-    // Zone assignment based on cumulative efficiency
-    const eff = r.cumEff ?? r.stepEff;
     let zone, tag, tagLabel, tagColor;
 
     if (r.isAnchor) {
       zone = 'A'; tag = 'anchor'; tagLabel = '🏆 Best Credit'; tagColor = 'blue';
     } else if (r.adjustedRate > anchor.adjustedRate) {
-      zone = 'A'; tag = 'normal'; tagLabel = ''; tagColor = 'gray';
-    } else if (eff === null) {
+      zone = 'A'; tag = 'normal'; tagLabel = '💰 More Credit'; tagColor = 'gray';
+    } else if (pastCliff) {
+      // Already crossed the cliff — everything below is overpriced
+      zone = 'C'; tag = 'avoid'; tagLabel = '🔴 Past Cliff — Overpriced'; tagColor = 'red';
+    } else if (stepEff === null) {
       zone = 'B'; tag = 'normal'; tagLabel = ''; tagColor = 'gray';
-    } else if (eff < 0) {
-      zone = 'B'; tag = 'sweetspot_strong'; tagLabel = '⚡ Pricing Anomaly — Take It'; tagColor = 'purple';
-    } else if (eff <= 0.20) {
+    } else if (stepEff < 0) {
+      // This step actually GAINS credit going down — pricing anomaly, take it
+      zone = 'B'; tag = 'sweetspot_strong'; tagLabel = '⚡ Pricing Anomaly'; tagColor = 'purple';
+    } else if (stepEff > STEP_CLIFF) {
+      // This single step is too expensive — CLIFF. This and everything below = Zone C.
+      pastCliff = true;
+      zone = 'C'; tag = 'avoid'; tagLabel = '🔴 Past Cliff — Overpriced'; tagColor = 'red';
+    } else if (stepEff <= 0.18) {
       zone = 'B'; tag = 'sweetspot_strong'; tagLabel = '🟢 Strong Value'; tagColor = 'green';
-    } else if (eff <= GOOD_THRESHOLD) {
+    } else if (stepEff <= GOOD_THRESHOLD) {
       zone = 'B'; tag = 'sweetspot'; tagLabel = '✅ Good Value'; tagColor = 'green';
-    } else if (cliffCount >= 1 && inCliff) {
-      zone = 'C'; tag = 'avoid'; tagLabel = '🔴 Past Cliff'; tagColor = 'red';
-    } else if (eff <= MARGINAL_THRESHOLD) {
-      zone = 'B'; tag = 'marginal'; tagLabel = '🟡 Marginal'; tagColor = 'yellow';
     } else {
-      zone = 'C'; tag = 'avoid'; tagLabel = '🔴 Overpriced'; tagColor = 'red';
+      zone = 'B'; tag = 'marginal'; tagLabel = '🟡 Marginal'; tagColor = 'yellow';
     }
 
-    return { ...r, zone, tag, tagLabel, tagColor, isCliff, cliffCount };
+    return { ...r, zone, tag, tagLabel, tagColor, isCliff: pastCliff && zone === 'C', pastCliff };
   });
 }
 
@@ -129,77 +131,87 @@ export function analyzeRateStack(rates, marginBPS = 0) {
  *   'low_cost'     — Lowest rate achievable with borrower paying ≤1% points.
  *   'no_cost'      — Rate with best lender credit that still saves money. Zone A.
  */
-export function selectRateForStrategy(analyzedRates, strategy, newLoanAmount, titleCharges, lenderFees, marginBPS) {
-  const marginPct = marginBPS / 100;
+export function selectRateForStrategy(analyzedRates, strategy, newLoanAmount, titleCharges, lenderFees, marginBPS, maxPointsPct = 5.0) {
   const totalFixedCosts = (titleCharges || 0) + (lenderFees || 0);
+  const maxPointsDollar = (maxPointsPct / 100) * newLoanAmount;
 
-  // Only work with rates that aren't in the "avoid" zone
-  const candidates = analyzedRates.filter(r => r.tag !== 'avoid' || strategy === 'no_cost');
+  // Enforce the max-points cap on EVERY strategy.
+  // A rate is eligible only if the borrower's out-of-pocket points are within the cap.
+  const withinCap = analyzedRates.filter(r => {
+    const pointsCost = r.clientPoints > 0 ? (r.clientPoints / 100) * newLoanAmount : 0;
+    return pointsCost <= maxPointsDollar + 1; // +1 for rounding
+  });
+
+  // Helpers
+  const lowestRateOf = (arr) => arr.length ? arr.reduce((lo, r) => r.adjustedRate < lo.adjustedRate ? r : lo, arr[0]) : null;
+  const bestCreditOf = (arr) => arr.length ? arr.reduce((b, r) => r.clientPoints < b.clientPoints ? r : b, arr[0]) : null;
 
   switch (strategy) {
     case 'lowest_rate': {
-      // Lowest rate in Zone B (good value) — stop before cliff
-      const zoneBRates = analyzedRates.filter(r =>
-        (r.zone === 'B' || r.zone === 'A') && r.tag !== 'avoid'
-      );
-      if (!zoneBRates.length) return null;
-      return zoneBRates.reduce((lowest, r) =>
-        r.adjustedRate < lowest.adjustedRate ? r : lowest, zoneBRates[0]);
+      // The LOWEST rate that still makes sense — not past the cliff, within points cap.
+      // We want the lowest rate among all non-cliff, non-avoid rates within the cap.
+      const eligible = withinCap.filter(r => !r.pastCliff && r.tag !== 'avoid');
+      if (eligible.length) return lowestRateOf(eligible);
+      // fallback: anything within cap that isn't past the cliff
+      const notPastCliff = withinCap.filter(r => !r.pastCliff);
+      if (notPastCliff.length) return lowestRateOf(notPastCliff);
+      return lowestRateOf(withinCap);
     }
 
     case 'margin_cost': {
-      // Find rate where lender credit ≈ broker margin dollar + title + lender fees
-      // i.e., netClosingCosts ≈ 0
-      const target = candidates.map(r => {
+      // Rate where lender credit covers margin + title + lender fees → net ≈ $0 to borrower.
+      // Among within-cap rates, find the one whose net cost is closest to $0 (prefer small credit).
+      const scored = withinCap.map(r => {
         const lenderCredit = r.clientPoints < 0 ? Math.abs(r.clientPoints / 100) * newLoanAmount : 0;
         const pointsCost = r.clientPoints > 0 ? (r.clientPoints / 100) * newLoanAmount : 0;
         const netCost = totalFixedCosts + pointsCost - lenderCredit;
         return { ...r, netCostDollar: netCost, absDist: Math.abs(netCost) };
       });
-      // Pick the rate closest to $0 net cost, preferring slightly negative (credit)
-      return target.reduce((best, r) => {
+      if (!scored.length) return null;
+      return scored.reduce((best, r) => {
         if (!best) return r;
-        // Prefer rates where netCost is just below $0 (small credit)
-        if (r.netCostDollar <= 0 && best.netCostDollar > 0) return r;
-        if (r.netCostDollar <= 0 && best.netCostDollar <= 0) {
-          // Both credits — pick lower rate (better for client)
-          return r.adjustedRate < best.adjustedRate ? r : best;
-        }
-        return r.absDist < best.absDist ? r : best;
+        // Prefer net cost <= 0 (covered), then lowest rate among covered
+        const rCovered = r.netCostDollar <= 0;
+        const bCovered = best.netCostDollar <= 0;
+        if (rCovered && !bCovered) return r;
+        if (!rCovered && bCovered) return best;
+        if (rCovered && bCovered) return r.adjustedRate < best.adjustedRate ? r : best;
+        return r.absDist < best.absDist ? r : best; // neither covered — closest to $0
       }, null);
     }
 
     case 'low_cost': {
-      // Lowest rate where borrower pays ≤ 1% of loan in points
-      const maxPoints = newLoanAmount * 0.01;
-      const eligible = candidates.filter(r => {
+      // Lowest rate where borrower pays <= 1% of loan in points (tighter than maxPointsPct).
+      const lowCostCap = newLoanAmount * 0.01;
+      const eligible = withinCap.filter(r => {
         const pointsCost = r.clientPoints > 0 ? (r.clientPoints / 100) * newLoanAmount : 0;
-        return pointsCost <= maxPoints;
+        return pointsCost <= lowCostCap + 1 && !r.pastCliff;
       });
-      if (!eligible.length) return candidates[candidates.length - 1]; // fallback lowest
-      return eligible.reduce((lowest, r) =>
-        r.adjustedRate < lowest.adjustedRate ? r : lowest, eligible[0]);
+      if (eligible.length) return lowestRateOf(eligible);
+      // fallback: closest to 1% within cap
+      const sorted = withinCap.filter(r => !r.pastCliff)
+        .sort((a, b) => {
+          const ap = a.clientPoints > 0 ? a.clientPoints : 0;
+          const bp = b.clientPoints > 0 ? b.clientPoints : 0;
+          return ap - bp;
+        });
+      return sorted[0] || lowestRateOf(withinCap);
     }
 
     case 'no_cost': {
-      // Rate with best lender credit that covers title + lender fees
-      // Must generate enough credit to cover all fixed costs
-      const nocostRates = analyzedRates.filter(r => {
+      // Lender credit must cover ALL fixed costs (title + lender fees).
+      // Among those, pick the LOWEST rate (best for client) that still fully covers.
+      const covers = analyzedRates.filter(r => {
         const lenderCredit = r.clientPoints < 0 ? Math.abs(r.clientPoints / 100) * newLoanAmount : 0;
         return lenderCredit >= totalFixedCosts;
       });
-      if (!nocostRates.length) {
-        // No rate covers everything — pick one with highest credit
-        return analyzedRates.reduce((best, r) =>
-          r.clientPoints < best.clientPoints ? r : best, analyzedRates[0]);
-      }
-      // Among no-cost rates, pick lowest rate (best for client)
-      return nocostRates.reduce((lowest, r) =>
-        r.adjustedRate < lowest.adjustedRate ? r : lowest, nocostRates[0]);
+      if (covers.length) return lowestRateOf(covers);
+      // No rate covers everything — pick the one with the most credit (anchor)
+      return bestCreditOf(analyzedRates);
     }
 
     default:
-      return candidates[0];
+      return lowestRateOf(withinCap);
   }
 }
 
@@ -225,3 +237,4 @@ export function scoreRateOption(scenario, yearsInHome = null) {
   const tw = hw + sw + rw + lw;
   return Math.round((horizonScore*(hw/tw) + savingsScore*(sw/tw) + recoupScore*(rw/tw) + lifetimeScore*(lw/tw)) * 10) / 10;
 }
+
