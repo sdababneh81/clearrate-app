@@ -44,7 +44,6 @@ function ScenarioCard({ scenario: sc, isRecommended, isSelected, onSelect }) {
         </div>
       </div>
 
-      {/* Points charged to client — prominent */}
       {sc.borrowerPaysPct > 0 && (
         <div className="mb-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 flex items-center justify-between">
           <span className="text-xs font-semibold text-amber-700">Discount Points</span>
@@ -75,7 +74,6 @@ function ScenarioCard({ scenario: sc, isRecommended, isSelected, onSelect }) {
         </div>
       </div>
 
-      {/* Efficiency tag */}
       {sc.efficiencyLabel && (
         <div className="text-xs text-center py-1 rounded-lg bg-gray-50 border border-gray-100 text-gray-600">{sc.efficiencyLabel}</div>
       )}
@@ -95,6 +93,302 @@ function LoanSummaryBar({ scenario: s, clientProfile }) {
       <SummaryCell label="Total Closing Costs" value={money(s.netClosingCosts)} />
     </div>
   );
+}
+
+function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStrategyResult, currentTotalPayment, debtPaymentTotal, currentMortgagePI, marginBPS, marginDollar, lenderFees, companyName, today }) {
+  const netCashOut = s.cashOut > 0 ? Math.max(0, s.cashOut - (s.netClosingCosts || 0)) : 0;
+  const brokerMarginPct = (parseFloat(marginBPS) || 0) / 100;
+  const baseNetPoints = (s.netPointsPct ?? 0) - brokerMarginPct;
+  const marginDollarAmt = Math.round(brokerMarginPct / 100 * s.newLoanAmount);
+  const yspEarned = marginDollar ? parseFloat(marginDollar) : marginDollarAmt;
+  const loan = s.newLoanAmount;
+
+  const termLabel = s.isARM ? `${s.armType || 'ARM'} → 30yr` : '30-Year Fixed';
+  const goalLabel = s.goal === 'cash_out' ? 'Cash-Out Refi' : 'Rate & Term Refi';
+  const stratLabel = activeStrategyResult?.strategyLabel || '';
+
+  // Build loan breakdown rows
+  const breakdownRows = [
+    ['Current Mortgage Balance', s.currentBalance || clientProfile.currentBalance, ''],
+    ...(s.debtBalanceTotal > 0 ? [['Debts Being Paid Off', s.debtBalanceTotal, '']] : []),
+    ['Title & Settlement Charges', s.titleCharges || parseFloat(clientProfile.titleCharges) || 0, ''],
+    ...((s.lenderFees || lenderFees) > 0 ? [['Lender Fees', s.lenderFees || lenderFees, '']] : []),
+    ...(s.cashOut > 0 ? [['Cash-Out Amount', s.cashOut, '']] : []),
+    ...(s.borrowerPaysPct > 0 ? [[`Discount Points (${s.borrowerPaysPct?.toFixed(3)}% of loan)`, s.pointsCost, 'amber']] : []),
+    ...(s.lenderCreditPct > 0 ? [[`Lender Credit (${s.lenderCreditPct?.toFixed(3)}% of loan)`, -s.lenderCredit, 'green']] : []),
+  ].filter(([, v]) => v !== 0 && v != null);
+
+  const debtRows = paidDebts.map(d =>
+    `<tr><td>${d.name}</td><td style="color:#6b7280">${d.type}</td><td style="text-align:right">${money(d.balance)}</td><td style="text-align:right;color:#16a34a;font-weight:600">-${money(d.payment)}/mo</td></tr>`
+  ).join('');
+
+  const llpaSection = (s.llpaHits?.length > 0)
+    ? s.llpaHits.map(hit => `
+        <tr style="background:#fff7ed">
+          <td style="color:#c2410c;font-size:11px">⚡ LLPA: ${hit.description}</td>
+          <td style="text-align:right;font-family:monospace;font-weight:700;color:${hit.hit <= 0 ? '#16a34a' : '#c2410c'}">${hit.hit <= 0 ? '' : '+'}${hit.hit.toFixed(3)}%</td>
+          <td style="text-align:right;font-family:monospace;font-size:11px;color:${hit.hit <= 0 ? '#16a34a' : '#c2410c'}">${hit.hit <= 0 ? '-' : '+'}${money(Math.abs(hit.hit / 100 * loan))}</td>
+        </tr>`).join('')
+    : '';
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>ClearRate — Refinance Analysis</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; font-size: 12px; color: #1a1a2e; background: #f8fafc; }
+    .page { max-width: 860px; margin: 0 auto; padding: 24px; }
+
+    /* ── HEADER HERO ── */
+    .hero { background: #0f2d5e; color: white; border-radius: 12px; overflow: hidden; margin-bottom: 16px; }
+    .hero-top { padding: 16px 20px 12px; display: flex; justify-content: space-between; align-items: flex-start; }
+    .hero-brand { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #93c5fd; margin-bottom: 4px; }
+    .hero-name { font-size: 20px; font-weight: 900; color: white; }
+    .hero-sub { font-size: 10px; color: #93c5fd; margin-top: 4px; }
+    .hero-badge { background: #16a34a; color: white; font-size: 10px; font-weight: 700; padding: 4px 12px; border-radius: 20px; white-space: nowrap; }
+    .hero-ltv { padding: 0 20px 10px; font-size: 10px; color: #93c5fd; }
+
+    /* ── KEY NUMBERS ROW ── */
+    .kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid rgba(255,255,255,0.1); }
+    .kpi-cell { padding: 14px 16px; border-right: 1px solid rgba(255,255,255,0.1); }
+    .kpi-cell:last-child { border-right: none; }
+    .kpi-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #93c5fd; margin-bottom: 4px; }
+    .kpi-value { font-size: 22px; font-weight: 900; color: white; line-height: 1; }
+    .kpi-value.green { color: #4ade80; }
+    .kpi-sub { font-size: 9px; color: #93c5fd; margin-top: 3px; }
+
+    /* ── TERMS ROW ── */
+    .terms-grid { display: grid; grid-template-columns: repeat(5, 1fr); border-top: 1px solid rgba(255,255,255,0.1); text-align: center; }
+    .terms-cell { padding: 10px 8px; border-right: 1px solid rgba(255,255,255,0.1); }
+    .terms-cell:last-child { border-right: none; }
+    .terms-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: #93c5fd; margin-bottom: 3px; }
+    .terms-value { font-size: 13px; font-weight: 700; color: white; }
+    .terms-value.blue { color: #93c5fd; font-size: 15px; }
+
+    /* ── SECTION CARDS ── */
+    .card { background: white; border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+    .card-header { background: #f8fafc; padding: 8px 16px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; border-bottom: 1px solid #e5e7eb; }
+
+    /* ── BREAKDOWN TABLE ── */
+    .breakdown { padding: 12px 16px; }
+    .brow { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f3f4f6; font-size: 12px; }
+    .brow:last-child { border-bottom: none; }
+    .brow.total { border-top: 2px solid #d1d5db; padding-top: 8px; margin-top: 4px; font-weight: 900; font-size: 13px; }
+    .brow.total .val { color: #1d4ed8; }
+    .brow.sub { font-size: 11px; color: #6b7280; }
+    .amber-text { color: #d97706; font-weight: 600; }
+    .green-text { color: #16a34a; font-weight: 600; }
+    .meta-row { display: flex; justify-content: space-between; padding: 5px 0; font-size: 11px; color: #6b7280; border-top: 1px solid #f3f4f6; }
+    .meta-val { font-weight: 700; }
+    .meta-val.green { color: #16a34a; }
+    .meta-val.amber { color: #d97706; }
+    .meta-val.red { color: #dc2626; }
+
+    /* ── DEBTS TABLE ── */
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th { background: #f8fafc; padding: 7px 12px; text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; color: #6b7280; border-bottom: 1px solid #e5e7eb; }
+    td { padding: 7px 12px; border-bottom: 1px solid #f9fafb; }
+    tr.total-row td { font-weight: 700; background: #f0fdf4; border-top: 1px solid #d1fae5; }
+
+    /* ── INTERNAL PRICING (LO only) ── */
+    .lo-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+    .lo-header { background: #1e3a5f; padding: 9px 16px; display: flex; justify-content: space-between; align-items: center; }
+    .lo-header-label { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: #bfdbfe; }
+    .lo-header-sub { font-size: 10px; color: #60a5fa; }
+    .lo-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 12px 14px; border-bottom: 1px solid #bfdbfe; }
+    .lo-tile { background: white; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px; text-align: center; }
+    .lo-tile-label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #3b82f6; margin-bottom: 3px; }
+    .lo-tile-val { font-size: 20px; font-weight: 900; color: #111827; }
+    .lo-tile-val.green { color: #16a34a; }
+    .lo-tile-val.amber { color: #d97706; }
+    .lo-tile-sub { font-size: 9px; color: #9ca3af; margin-top: 2px; }
+    .lo-table-wrap { padding: 12px 14px; }
+    .lo-table-title { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #1d4ed8; margin-bottom: 6px; letter-spacing: 0.05em; }
+    .lo-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .lo-table th { background: #eff6ff; padding: 6px 10px; text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; color: #3b82f6; border-bottom: 1px solid #bfdbfe; }
+    .lo-table th:not(:first-child) { text-align: right; }
+    .lo-table td { padding: 7px 10px; border-bottom: 1px solid #f0f9ff; }
+    .lo-table td:not(:first-child) { text-align: right; font-family: monospace; font-weight: 700; }
+    .lo-table tr.llpa-row { background: #fff7ed; }
+    .lo-table tr.subtotal-row { background: #f9fafb; border-top: 2px solid #bfdbfe; border-bottom: 2px solid #bfdbfe; }
+    .lo-table tr.margin-row { background: #fffbeb; }
+    .lo-table tr.points-row { background: #fef2f2; }
+    .lo-table tr.final-row { background: #eff6ff; }
+    .lo-table tr.final-row td { font-weight: 900; font-size: 13px; }
+    .lo-narrative { margin: 10px 14px 12px; background: #dbeafe; border-radius: 7px; padding: 8px 12px; font-size: 10px; color: #1e40af; line-height: 1.6; }
+
+    /* ── DISCLAIMER ── */
+    .disclaimer { font-size: 9px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 10px; margin-top: 14px; text-align: center; line-height: 1.6; }
+
+    @media print {
+      body { background: white; }
+      .page { padding: 12px; }
+      .hero { border-radius: 8px; }
+      .card { break-inside: avoid; }
+      .lo-box { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- HERO HEADER -->
+  <div class="hero">
+    <div class="hero-top">
+      <div>
+        <div class="hero-brand">${companyName} | Refinance Savings Analysis</div>
+        <div class="hero-name">Prepared for: ${clientProfile.borrowerName || 'Borrower'}</div>
+        <div class="hero-sub">${termLabel} · ${goalLabel}${stratLabel ? ' · ' + stratLabel : ''}${s.monthlySavings > 0 ? ' · Net savings before sale: +' + money(s.monthlySavings * 60) + ' over 5 yrs' : ''}</div>
+        <div class="hero-sub">${today}</div>
+      </div>
+      <div class="hero-badge">★ AI RECOMMENDED</div>
+    </div>
+    ${clientProfile.estimatedValue ? `<div class="hero-ltv">LTV: ${Math.round((s.newLoanAmount / parseFloat(clientProfile.estimatedValue)) * 100)}% of ${money(clientProfile.estimatedValue)} estimated value</div>` : ''}
+
+    <!-- KPI ROW -->
+    <div class="kpi-grid">
+      <div class="kpi-cell">
+        <div class="kpi-label">Paying Now</div>
+        <div class="kpi-value">${money(currentTotalPayment)}/mo</div>
+        <div class="kpi-sub">All current obligations</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">After Refinance</div>
+        <div class="kpi-value">${money(s.newPI + parseFloat(clientProfile.escrow || 0))}/mo</div>
+        <div class="kpi-sub">P&amp;I: ${money(s.newPI)} + Escrow: ${money(clientProfile.escrow || 0)}</div>
+      </div>
+      <div class="kpi-cell" style="background:rgba(22,163,74,0.15)">
+        <div class="kpi-label">Monthly Savings</div>
+        <div class="kpi-value green">${s.monthlySavings > 0 ? '+' : ''}${money(s.monthlySavings)}/mo</div>
+        <div class="kpi-sub">${money(s.monthlySavings * 12)}/yr · ${money(s.monthlySavings * 60)} over 5 yrs</div>
+      </div>
+      ${s.cashOut > 0 ? `<div class="kpi-cell" style="background:rgba(22,163,74,0.15)"><div class="kpi-label">Cash to Client</div><div class="kpi-value green">~${money(netCashOut)}</div><div class="kpi-sub">Net after closing costs</div></div>` : ''}
+    </div>
+
+    <!-- TERMS ROW -->
+    <div class="terms-grid">
+      <div class="terms-cell"><div class="terms-label">Loan Amount</div><div class="terms-value">${money(s.newLoanAmount)}</div></div>
+      <div class="terms-cell"><div class="terms-label">Interest Rate</div><div class="terms-value blue">${pct(s.rate)}</div></div>
+      <div class="terms-cell"><div class="terms-label">Term</div><div class="terms-value">${termLabel}</div></div>
+      <div class="terms-cell"><div class="terms-label">P&amp;I Payment</div><div class="terms-value">${money(s.newPI)}/mo</div></div>
+      <div class="terms-cell"><div class="terms-label">Recoupment</div><div class="terms-value">${s.breakevenMonths === 0 ? 'Immediate' : s.breakevenMonths + ' months'}</div></div>
+    </div>
+  </div>
+
+  <!-- LOAN BALANCE BREAKDOWN -->
+  <div class="card">
+    <div class="card-header">New Loan Balance Breakdown</div>
+    <div class="breakdown">
+      ${breakdownRows.map(([label, val, color]) => `
+        <div class="brow">
+          <span class="${color === 'amber' ? 'amber-text' : color === 'green' ? 'green-text' : ''}">${label}</span>
+          <span class="${color === 'amber' ? 'amber-text' : color === 'green' ? 'green-text' : ''}">${color === 'green' ? '-' : color === 'amber' ? '+' : ''}${money(Math.abs(val))}</span>
+        </div>`).join('')}
+      <div class="brow total">
+        <span>New Loan Total</span>
+        <span class="val">${money(s.newLoanAmount)}</span>
+      </div>
+      <div class="meta-row" style="margin-top:6px">
+        <span>Net Closing Costs</span>
+        <span class="meta-val ${s.netClosingCosts <= 0 ? 'green' : ''}">${s.netClosingCosts <= 0 ? '-' : ''}${money(Math.abs(s.netClosingCosts))}</span>
+      </div>
+      <div class="meta-row">
+        <span>Recoupment period</span>
+        <span class="meta-val ${s.breakevenMonths <= 24 ? 'green' : s.breakevenMonths <= 36 ? 'amber' : 'red'}">${s.breakevenMonths === 0 ? 'Immediate' : s.breakevenMonths + ' months'}</span>
+      </div>
+    </div>
+  </div>
+
+  ${marginBPS > 0 ? `
+  <!-- INTERNAL PRICING (LO only — won't show if margin = 0) -->
+  <div class="lo-box">
+    <div class="lo-header">
+      <span class="lo-header-label">🔒 Internal Pricing &amp; Compensation — Not for Client</span>
+      <span class="lo-header-sub">${s.program} · ${s.rate?.toFixed(3)}% · ${s.isARM ? (s.armType || 'ARM') : '30-Year Fixed'}</span>
+    </div>
+    <div class="lo-tiles">
+      <div class="lo-tile">
+        <div class="lo-tile-label">Rate</div>
+        <div class="lo-tile-val">${s.rate?.toFixed(3)}%</div>
+        <div class="lo-tile-sub">${s.isARM ? (s.armType || 'ARM') : '30-yr Fixed'}</div>
+      </div>
+      <div class="lo-tile">
+        <div class="lo-tile-label">YSP Earned</div>
+        <div class="lo-tile-val green">${money(yspEarned)}</div>
+        <div class="lo-tile-sub">${marginBPS} BPS on ${money(loan)}</div>
+      </div>
+      <div class="lo-tile">
+        <div class="lo-tile-label">Net to Client</div>
+        <div class="lo-tile-val ${s.lenderCreditPct > 0 ? 'green' : s.borrowerPaysPct > 0 ? 'amber' : ''}">${s.lenderCreditPct > 0 ? '-' + money(s.lenderCredit) : s.borrowerPaysPct > 0 ? '+' + money(s.pointsCost) : '$0'}</div>
+        <div class="lo-tile-sub">${s.lenderCreditPct > 0 ? 'credit to client' : s.borrowerPaysPct > 0 ? 'points charged' : 'par — no cost'}</div>
+      </div>
+    </div>
+    <div class="lo-table-wrap">
+      <div class="lo-table-title">Full Price Stack</div>
+      <table class="lo-table">
+        <thead>
+          <tr><th>Item</th><th>Points %</th><th>Dollar</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Base Price (rate sheet — 30-day lock)<br><span style="font-size:10px;color:#9ca3af;font-weight:400">before LLPA adjustments</span></td>
+            <td style="color:${(s.basePoints ?? baseNetPoints) <= 0 ? '#16a34a' : '#dc2626'}">${(s.basePoints ?? baseNetPoints) <= 0 ? '' : '+'}${(s.basePoints ?? baseNetPoints).toFixed(3)}%</td>
+            <td style="color:${(s.basePoints ?? baseNetPoints) <= 0 ? '#16a34a' : '#dc2626'};font-size:11px">${(s.basePoints ?? baseNetPoints) <= 0 ? '-' : '+'}${money(Math.abs((s.basePoints ?? baseNetPoints) / 100 * loan))}</td>
+          </tr>
+          ${llpaSection}
+          <tr class="subtotal-row">
+            <td style="font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:0.04em;color:#374151">Net Lender Price (after all LLPAs)</td>
+            <td style="color:${baseNetPoints <= 0 ? '#16a34a' : '#d97706'}">${baseNetPoints <= 0 ? '' : '+'}${baseNetPoints.toFixed(3)}%</td>
+            <td style="color:${baseNetPoints <= 0 ? '#16a34a' : '#d97706'};font-size:11px">${baseNetPoints <= 0 ? '-' : '+'}${money(Math.abs(baseNetPoints / 100 * loan))}</td>
+          </tr>
+          <tr class="margin-row">
+            <td>Broker Margin (${marginBPS} BPS)<br><span style="font-size:10px;color:#d97706;font-weight:400">your compensation — added to price</span></td>
+            <td style="color:#d97706">+${brokerMarginPct.toFixed(3)}%</td>
+            <td style="color:#d97706;font-size:11px">+${money(marginDollarAmt)}</td>
+          </tr>
+          ${s.borrowerPaysPct > 0 ? `<tr class="points-row">
+            <td>Discount Points Charged to Client (${s.borrowerPaysPct.toFixed(3)}%)<br><span style="font-size:10px;color:#dc2626;font-weight:400">rolled into loan or paid at closing</span></td>
+            <td style="color:#dc2626">+${s.borrowerPaysPct.toFixed(3)}%</td>
+            <td style="color:#dc2626;font-size:11px">+${money(s.pointsCost)}</td>
+          </tr>` : ''}
+          <tr class="final-row">
+            <td>Final Client Price<br><span style="font-size:10px;color:#3b82f6;font-weight:400">${s.lenderCreditPct > 0 ? 'credit applied toward closing costs' : s.borrowerPaysPct > 0 ? 'discount points charged to borrower' : 'par — no cost to borrower, no credit'}</span></td>
+            <td style="color:${s.lenderCreditPct > 0 ? '#16a34a' : s.borrowerPaysPct > 0 ? '#dc2626' : '#1d4ed8'}">${s.lenderCreditPct > 0 ? '-' + s.lenderCreditPct.toFixed(3) + '%' : s.borrowerPaysPct > 0 ? '+' + s.borrowerPaysPct.toFixed(3) + '%' : '0.000%'}</td>
+            <td style="color:${s.lenderCreditPct > 0 ? '#16a34a' : s.borrowerPaysPct > 0 ? '#dc2626' : '#1d4ed8'}">${s.lenderCreditPct > 0 ? '-' + money(s.lenderCredit) : s.borrowerPaysPct > 0 ? '+' + money(s.pointsCost) : '$0'}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="lo-narrative">
+      <strong>Price build:</strong> UWM sheet at <strong>${s.rate?.toFixed(3)}%</strong> → base price <strong>${(s.basePoints ?? baseNetPoints) <= 0 ? Math.abs(s.basePoints ?? baseNetPoints).toFixed(3) + '% credit' : (s.basePoints ?? baseNetPoints).toFixed(3) + '% cost'}</strong> → after LLPAs: <strong>${baseNetPoints <= 0 ? Math.abs(baseNetPoints).toFixed(3) + '% credit' : baseNetPoints.toFixed(3) + '% cost'}</strong> → add <strong>${marginBPS} BPS margin</strong> → client gets <strong>${s.lenderCreditPct > 0 ? s.lenderCreditPct.toFixed(3) + '% credit (' + money(s.lenderCredit) + ')' : s.borrowerPaysPct > 0 ? 'charged ' + s.borrowerPaysPct.toFixed(3) + '% points (' + money(s.pointsCost) + ')' : 'par'}</strong>. YSP: <strong style="color:#16a34a">${money(yspEarned)}</strong>.
+    </div>
+  </div>` : ''}
+
+  ${paidDebts.length > 0 ? `
+  <!-- DEBTS PAID OFF -->
+  <div class="card">
+    <div class="card-header">Debts Paid Off at Closing</div>
+    <table>
+      <thead><tr><th>Creditor</th><th>Type</th><th style="text-align:right">Balance</th><th style="text-align:right">Mo. Payment</th></tr></thead>
+      <tbody>
+        ${debtRows}
+        <tr class="total-row">
+          <td colspan="2">Total Eliminated</td>
+          <td style="text-align:right">${money(s.debtBalanceTotal)}</td>
+          <td style="text-align:right;color:#16a34a">-${money(debtPaymentTotal + currentMortgagePI)}/mo</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>` : ''}
+
+  <div class="disclaimer">
+    This analysis is for illustrative purposes only and is prepared by ${companyName}. Final loan terms are subject to underwriting approval, appraisal, and lender guidelines. Not a commitment to lend. NMLS regulated.
+  </div>
+</div>
+</body>
+</html>`;
 }
 
 export default function AnalysisReport({ result, clientProfile, selectedDebts, marginBPS, marginDollar, lenderFees = 0, pricingStrategies = [], companyName = 'Priority 1 Lending' }) {
@@ -127,58 +421,22 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
   const fixedScenarios = visibleScenarios.filter(sc => !sc.isARM);
   const armScenarios = visibleScenarios.filter(sc => sc.isARM);
 
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
   const handlePrint = () => {
-    const printContent = printRef.current;
-    if (!printContent) return;
+    const s = activeScenario || result.recommended;
+    if (!s) return;
+    const html = buildPrintHTML({
+      s, clientProfile, paidDebts, remainingDebts,
+      activeStrategyResult, currentTotalPayment,
+      debtPaymentTotal, currentMortgagePI,
+      marginBPS, marginDollar, lenderFees,
+      companyName, today,
+    });
     const w = window.open('', '_blank');
-    w.document.write(`
-      <html><head>
-        <title>ClearRate — Refinance Analysis</title>
-        <style>
-          * { box-sizing: border-box; margin: 0; padding: 0; }
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 11px; color: #1a1a2e; padding: 20px; }
-          .print-header { background: #0f2d5e; color: white; padding: 16px 20px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
-          .print-header h1 { font-size: 20px; font-weight: 800; }
-          .print-header .sub { font-size: 11px; color: #93c5fd; margin-top: 2px; }
-          .section { background: white; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
-          .section-header { background: #f8fafc; padding: 8px 14px; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; border-bottom: 1px solid #e5e7eb; }
-          .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-          .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-          .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
-          .cell { padding: 10px 14px; }
-          .cell-label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #9ca3af; margin-bottom: 2px; }
-          .cell-value { font-size: 18px; font-weight: 800; color: #111827; }
-          .cell-sub { font-size: 9px; color: #6b7280; margin-top: 2px; }
-          .highlight { color: #16a34a !important; }
-          .big-savings { font-size: 28px !important; color: #16a34a !important; }
-          table { width: 100%; border-collapse: collapse; font-size: 10px; }
-          th { background: #f8fafc; padding: 6px 10px; text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; color: #6b7280; border-bottom: 1px solid #e5e7eb; }
-          td { padding: 6px 10px; border-bottom: 1px solid #f3f4f6; }
-          .row-total { font-weight: 700; background: #f0fdf4; }
-          .text-right { text-align: right; }
-          .green { color: #16a34a; font-weight: 700; }
-          .amber { color: #d97706; font-weight: 700; }
-          .red { color: #dc2626; font-weight: 700; }
-          .blue { color: #2563eb; font-weight: 700; }
-          .disclaimer { font-size: 9px; color: #9ca3af; margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 10px; }
-          @media print { body { padding: 10px; } .no-print { display: none; } }
-          .rate-big { font-size: 32px; font-weight: 900; color: #2563eb; }
-          .tag { display: inline-block; font-size: 9px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
-          .tag-green { background: #dcfce7; color: #16a34a; }
-          .tag-amber { background: #fef3c7; color: #d97706; }
-          .tag-blue { background: #dbeafe; color: #2563eb; }
-          .divider { border: none; border-top: 1px solid #e5e7eb; margin: 10px 0; }
-          .summary-bar { display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 1px solid #e5e7eb; }
-          .summary-bar .cell { border-right: 1px solid #e5e7eb; }
-          .summary-bar .cell:last-child { border-right: none; }
-        </style>
-      </head><body>
-    `);
-    w.document.write(printContent.innerHTML);
-    w.document.write('<div class="disclaimer">This analysis is for illustrative purposes only and is prepared by ' + companyName + '. Final loan terms are subject to underwriting approval, appraisal, and lender guidelines. Not a commitment to lend. NMLS regulated.</div>');
-    w.document.write('</body></html>');
+    w.document.write(html);
     w.document.close();
-    setTimeout(() => { w.print(); }, 500);
+    setTimeout(() => { w.print(); }, 600);
   };
 
   const s = activeScenario || result.recommended;
@@ -214,14 +472,12 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
   );
 
   const netCashOut = s.cashOut > 0 ? Math.max(0, s.cashOut - (s.netClosingCosts || 0)) : 0;
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   const isCardSelected = (sc) => s === sc || (s.program === sc.program && s.goal === sc.goal && s.isARM === sc.isARM && s.rate === sc.rate);
   const isCardRecommended = (sc) => sc === recommended || (sc.program === recommended?.program && sc.goal === recommended?.goal && sc.isARM === recommended?.isARM && sc.rate === recommended?.rate);
 
   return (
     <div className="space-y-5">
 
-      {/* All-negative savings banner — scenarios exist but none save money */}
       {result.status === 'all_negative' && (
         <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-start gap-3">
           <span className="text-xl">⚠️</span>
@@ -253,7 +509,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
         </div>
       )}
 
-      {/* Strategy tabs — always show when strategies selected */}
+      {/* Strategy tabs */}
       {strategyResults.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
           <div className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Pricing Strategy — Select to Compare</div>
@@ -292,7 +548,6 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
 
       {/* Scenario cards */}
       <div>
-        {/* Fixed/ARM toggle */}
         <div className="bg-gray-100 rounded-xl p-1 flex gap-1 w-fit mb-4">
           <button onClick={() => setProductTab('fixed')}
             className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${productTab === 'fixed' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
@@ -320,24 +575,10 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
         )}
       </div>
 
-      {/* ── PRINTABLE LOAN SUMMARY ── */}
+      {/* ── ON-SCREEN LOAN SUMMARY (same data as print) ── */}
       <div ref={printRef} id="clearrate-print">
 
-        {/* Print Header — hidden on screen via CSS, shown on print */}
-        <div className="hidden print:block mb-4 p-4 bg-[#0f2d5e] text-white rounded-xl">
-          <div className="flex justify-between items-center">
-            <div>
-              <div className="text-xl font-black">ClearRate — Refinance Analysis</div>
-              <div className="text-blue-300 text-xs mt-1">{companyName} · {today}</div>
-            </div>
-            <div className="text-right">
-              <div className="text-blue-300 text-xs">Prepared for</div>
-              <div className="font-bold">{clientProfile.borrowerName}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Loan Summary Header — visible on screen too */}
+        {/* Dark hero header — visible on screen */}
         <div className="bg-[#0f2d5e] text-white rounded-2xl overflow-hidden shadow-lg">
           <div className="px-5 pt-4 pb-3 flex items-start justify-between">
             <div>
@@ -358,14 +599,12 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
             )}
           </div>
 
-          {/* LTV bar */}
           {clientProfile.estimatedValue && (
             <div className="px-5 pb-3 text-xs text-blue-400">
               LTV: {Math.round((s.newLoanAmount / parseFloat(clientProfile.estimatedValue)) * 100)}% of {money(clientProfile.estimatedValue)} estimated value
             </div>
           )}
 
-          {/* Key numbers row */}
           <div className="grid grid-cols-2 sm:grid-cols-4 border-t border-blue-800">
             {[
               ['PAYING NOW', money(currentTotalPayment) + '/mo', 'All current obligations', false],
@@ -381,7 +620,6 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
             ))}
           </div>
 
-          {/* New loan terms */}
           <div className="grid grid-cols-3 sm:grid-cols-5 border-t border-blue-800 text-center">
             {[
               ['LOAN AMOUNT', money(s.newLoanAmount)],
@@ -439,7 +677,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
           </div>
         </div>
 
-        {/* LO-only: Internal Price Stack — not for client */}
+        {/* Internal Price Stack */}
         {marginBPS > 0 && (() => {
           const brokerMarginPct = (parseFloat(marginBPS) || 0) / 100;
           const baseNetPoints = (s.netPointsPct ?? 0) - brokerMarginPct;
@@ -456,7 +694,6 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                 <div className="text-xs text-blue-400">{s.program} · {s.rate?.toFixed(3)}% · {s.isARM ? (s.armType || 'ARM') : '30-Year Fixed'}</div>
               </div>
 
-              {/* Quick summary tiles */}
               <div className="grid grid-cols-3 gap-3 p-4 border-b border-blue-200">
                 <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
                   <div className="text-xs text-blue-500 font-bold uppercase mb-1">Rate</div>
@@ -477,7 +714,6 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                 </div>
               </div>
 
-              {/* Full price stack table */}
               <div className="p-4">
                 <div className="text-xs font-bold text-blue-700 uppercase tracking-wide mb-2">Full Price Stack</div>
                 <div className="bg-white rounded-xl border border-blue-200 overflow-hidden">
@@ -490,7 +726,6 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                       </tr>
                     </thead>
                     <tbody>
-                      {/* Base price */}
                       <tr className="border-b border-gray-100">
                         <td className="px-4 py-2.5 text-gray-700 font-medium">
                           Base Price (rate sheet — 30-day lock)
@@ -504,7 +739,6 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                         </td>
                       </tr>
 
-                      {/* LLPA hits — from parsed rate sheet */}
                       {(s.llpaHits?.length > 0) ? s.llpaHits.map((hit, i) => (
                         <tr key={i} className="border-b border-orange-50 bg-orange-50">
                           <td className="px-4 py-2 text-orange-800 text-xs font-semibold">⚡ LLPA: {hit.description}</td>
@@ -532,7 +766,6 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                         ) : null;
                       })()}
 
-                      {/* Net lender price subtotal */}
                       <tr className="border-b-2 border-blue-200 bg-gray-50">
                         <td className="px-4 py-2.5 text-gray-800 font-bold text-xs uppercase tracking-wide">Net Lender Price (after all LLPAs)</td>
                         <td className={`px-4 py-2.5 text-right font-mono font-bold ${baseNetPoints <= 0 ? 'text-green-700' : 'text-amber-700'}`}>
@@ -543,7 +776,6 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                         </td>
                       </tr>
 
-                      {/* Broker margin */}
                       <tr className="border-b border-amber-100 bg-amber-50">
                         <td className="px-4 py-2.5 text-amber-800 font-semibold">
                           Broker Margin ({marginBPS} BPS)
@@ -553,7 +785,6 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                         <td className="px-4 py-2.5 text-right font-mono text-xs font-semibold text-amber-600">+{money(marginDollarAmt)}</td>
                       </tr>
 
-                      {/* Points charged to customer */}
                       {s.borrowerPaysPct > 0 && (
                         <tr className="border-b border-red-100 bg-red-50">
                           <td className="px-4 py-2.5 text-red-800 font-semibold">
@@ -565,7 +796,6 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                         </tr>
                       )}
 
-                      {/* Final client price */}
                       <tr className="bg-blue-50">
                         <td className="px-4 py-3 text-blue-900 font-black">
                           Final Client Price
@@ -584,7 +814,6 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                   </table>
                 </div>
 
-                {/* Narrative */}
                 <div className="mt-3 bg-blue-100 rounded-lg px-3 py-2.5 text-xs text-blue-800 leading-relaxed">
                   <span className="font-bold">Price build:</span> UWM sheet at <span className="font-bold">{s.rate?.toFixed(3)}%</span> → base price <span className="font-bold">{(s.basePoints ?? baseNetPoints) <= 0 ? `${Math.abs(s.basePoints ?? baseNetPoints).toFixed(3)}% credit` : `${(s.basePoints ?? baseNetPoints).toFixed(3)}% cost`}</span> → after LLPAs: <span className="font-bold">{baseNetPoints <= 0 ? `${Math.abs(baseNetPoints).toFixed(3)}% credit` : `${baseNetPoints.toFixed(3)}% cost`}</span> → add <span className="font-bold">{marginBPS} BPS margin</span> → client gets <span className="font-bold">{s.lenderCreditPct > 0 ? `${s.lenderCreditPct.toFixed(3)}% credit (${money(s.lenderCredit)})` : s.borrowerPaysPct > 0 ? `charged ${s.borrowerPaysPct.toFixed(3)}% points (${money(s.pointsCost)})` : 'par'}</span>. YSP: <span className="font-bold text-green-800">{money(yspEarned)}</span>.
                 </div>
@@ -630,7 +859,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
           This analysis is for illustrative purposes only. Final loan terms are subject to underwriting approval. Prepared by {companyName}.
         </div>
 
-      </div>{/* end printRef */}
+      </div>
     </div>
   );
 }
