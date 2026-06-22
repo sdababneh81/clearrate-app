@@ -13,6 +13,32 @@ function BadgePill({ recommendation }) {
   );
 }
 
+function MortgageRow({ debt }) {
+  return (
+    <div className="border-2 border-blue-200 rounded-lg bg-blue-50 mb-1">
+      <div className="flex items-center gap-3 p-3">
+        {/* Lock icon — mortgage is being refinanced, not paid off */}
+        <div className="w-5 h-5 rounded border-2 border-blue-400 bg-blue-100 flex items-center justify-center flex-shrink-0">
+          <svg className="w-3 h-3 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-sm text-blue-900 truncate">{debt.name}</span>
+            <span className="text-xs text-blue-500">· Being Refinanced</span>
+          </div>
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full border border-blue-300 bg-blue-100 text-blue-700">🔄 Replaced by new loan</span>
+        </div>
+        <div className="text-right flex-shrink-0">
+          <div className="font-bold text-sm text-blue-900">{debt.payment > 0 ? `${money(debt.payment)}/mo` : '—'}</div>
+          <div className="text-xs text-blue-600">Bal: {money(debt.balance)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DebtRow({ debt, index, onToggle }) {
   const [expanded, setExpanded] = useState(false);
   const { analysis } = debt;
@@ -83,12 +109,14 @@ function DebtRow({ debt, index, onToggle }) {
 }
 
 export default function DebtChecklist({ debts, onToggle, onAddDebt }) {
+  const mortgageDebts = debts.filter(d => d.isMortgage);
+  const regularDebts = debts.filter(d => !d.isMortgage);
   const [newName, setNewName] = useState('');
   const [newBal, setNewBal] = useState('');
   const [newPmt, setNewPmt] = useState('');
   const [newType, setNewType] = useState('Revolving');
 
-  const selectedCount = debts.filter(d => d.selected).length;
+  const selectedCount = debts.filter(d => d.selected && !d.isMortgage).length;
   const selectedBalance = debts.filter(d => d.selected).reduce((s, d) => s + d.balance, 0);
   const selectedPayments = debts.filter(d => d.selected).reduce((s, d) => s + d.payment, 0);
 
@@ -103,15 +131,19 @@ export default function DebtChecklist({ debts, onToggle, onAddDebt }) {
       {/* Selection summary */}
       <div className="flex items-center justify-between mb-3 px-1">
         <span className="text-sm text-gray-600">
-          <span className="font-semibold text-gray-900">{selectedCount}</span> of {debts.length} debts selected for payoff
+          <span className="font-semibold text-gray-900">{selectedCount}</span> of {regularDebts.length} debts selected for payoff
         </span>
         <span className="text-sm font-semibold text-blue-700">{money(selectedPayments)}/mo eliminated · {money(selectedBalance)} balance</span>
       </div>
 
       <div className="flex flex-col gap-2">
-        {debts.map((debt, i) => (
-          <DebtRow key={i} debt={debt} index={i} onToggle={onToggle} />
+        {mortgageDebts.map((debt, i) => (
+          <MortgageRow key={`m-${i}`} debt={debt} />
         ))}
+        {regularDebts.map((debt, i) => {
+          const originalIndex = debts.indexOf(debt);
+          return <DebtRow key={i} debt={debt} index={originalIndex} onToggle={onToggle} />;
+        })}
       </div>
 
       {/* Add manual debt */}
@@ -130,3 +162,4 @@ export default function DebtChecklist({ debts, onToggle, onAddDebt }) {
     </div>
   );
 }
+
