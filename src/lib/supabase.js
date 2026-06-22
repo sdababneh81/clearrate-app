@@ -1,32 +1,32 @@
 import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-// Support both new publishable key and legacy anon key
-const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY
-const SUPABASE_PUBLISHABLE = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+// Use publishable key if available, fall back to anon key
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY
 
-const KEY = SUPABASE_PUBLISHABLE || SUPABASE_ANON
-
-if (!SUPABASE_URL || !KEY) {
-  console.error('Missing Supabase env vars. Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY')
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('Missing Supabase env vars')
 }
 
-export const supabase = createClient(SUPABASE_URL, KEY, {
-  global: {
-    headers: {
-      'Accept': 'application/json',
-    }
-  },
+// Create client with explicit headers to fix 406 errors
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
+    detectSessionInUrl: true,
   },
-  db: {
-    schema: 'public',
+  global: {
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Prefer': 'return=representation',
+    },
   },
 })
 
-// ─── Auth helpers ────────────────────────────────────────────
+// ─── Auth helpers ─────────────────────────────────────────────
 export async function signIn(email, password) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password })
   if (error) throw error
@@ -62,7 +62,7 @@ export async function getProfile(userId) {
   return data
 }
 
-// ─── Rate sheet helpers ───────────────────────────────────────
+// ─── Rate sheet helpers ────────────────────────────────────────
 export async function getActiveRateSheet() {
   const { data, error } = await supabase
     .from('rate_sheets')
@@ -70,18 +70,14 @@ export async function getActiveRateSheet() {
     .eq('is_active', true)
     .order('created_at', { ascending: false })
     .limit(1)
-    .single()
-  if (error && error.code !== 'PGRST116') throw error // PGRST116 = no rows
+    .maybeSingle()
+  if (error) throw error
   return data || null
 }
 
 export async function saveRateSheet(programs, effectiveDate, llpasApplied, filename, userId) {
-  // Deactivate all existing rate sheets first
-  await supabase
-    .from('rate_sheets')
-    .update({ is_active: false })
-    .eq('is_active', true)
-
+  // Deactivate existing
+  await supabase.from('rate_sheets').update({ is_active: false }).eq('is_active', true)
   const { data, error } = await supabase
     .from('rate_sheets')
     .insert({
@@ -114,7 +110,7 @@ export async function setActiveRateSheet(id) {
   if (error) throw error
 }
 
-// ─── User management helpers (admin only) ────────────────────
+// ─── User management ──────────────────────────────────────────
 export async function getAllProfiles() {
   const { data, error } = await supabase
     .from('profiles')
@@ -124,26 +120,13 @@ export async function getAllProfiles() {
   return data || []
 }
 
-export async function inviteUser(email) {
-  // Supabase magic link invite — user gets email to set password
-  const { data, error } = await supabase.auth.admin?.inviteUserByEmail(email)
-  if (error) throw error
-  return data
-}
-
 export async function updateUserRole(userId, role) {
-  const { error } = await supabase
-    .from('profiles')
-    .update({ role })
-    .eq('id', userId)
+  const { error } = await supabase.from('profiles').update({ role }).eq('id', userId)
   if (error) throw error
 }
 
 export async function updateUserActive(userId, active) {
-  const { error } = await supabase
-    .from('profiles')
-    .update({ active })
-    .eq('id', userId)
+  const { error } = await supabase.from('profiles').update({ active }).eq('id', userId)
   if (error) throw error
 }
 
@@ -154,7 +137,7 @@ export async function saveCRMSession(sessionId, borrowerData) {
     .upsert({
       session_id: sessionId,
       borrower_data: borrowerData,
-      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24hr TTL
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     })
     .select()
     .single()
@@ -168,7 +151,7 @@ export async function getCRMSession(sessionId) {
     .select('*')
     .eq('session_id', sessionId)
     .gt('expires_at', new Date().toISOString())
-    .single()
+    .maybeSingle()
   if (error) throw error
   return data
 }
