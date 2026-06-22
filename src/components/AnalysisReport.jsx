@@ -301,70 +301,7 @@ function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStr
     </div>
   </div>
 
-  ${marginBPS > 0 ? `
-  <!-- INTERNAL PRICING (LO only — won't show if margin = 0) -->
-  <div class="lo-box">
-    <div class="lo-header">
-      <span class="lo-header-label">🔒 Internal Pricing &amp; Compensation — Not for Client</span>
-      <span class="lo-header-sub">${s.program} · ${s.rate?.toFixed(3)}% · ${s.isARM ? (s.armType || 'ARM') : '30-Year Fixed'}</span>
-    </div>
-    <div class="lo-tiles">
-      <div class="lo-tile">
-        <div class="lo-tile-label">Rate</div>
-        <div class="lo-tile-val">${s.rate?.toFixed(3)}%</div>
-        <div class="lo-tile-sub">${s.isARM ? (s.armType || 'ARM') : '30-yr Fixed'}</div>
-      </div>
-      <div class="lo-tile">
-        <div class="lo-tile-label">YSP Earned</div>
-        <div class="lo-tile-val green">${money(yspEarned)}</div>
-        <div class="lo-tile-sub">${marginBPS} BPS on ${money(loan)}</div>
-      </div>
-      <div class="lo-tile">
-        <div class="lo-tile-label">Net to Client</div>
-        <div class="lo-tile-val ${s.lenderCreditPct > 0 ? 'green' : s.borrowerPaysPct > 0 ? 'amber' : ''}">${s.lenderCreditPct > 0 ? '-' + money(s.lenderCredit) : s.borrowerPaysPct > 0 ? '+' + money(s.pointsCost) : '$0'}</div>
-        <div class="lo-tile-sub">${s.lenderCreditPct > 0 ? 'credit to client' : s.borrowerPaysPct > 0 ? 'points charged' : 'par — no cost'}</div>
-      </div>
-    </div>
-    <div class="lo-table-wrap">
-      <div class="lo-table-title">Full Price Stack</div>
-      <table class="lo-table">
-        <thead>
-          <tr><th>Item</th><th>Points %</th><th>Dollar</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Base Price (rate sheet — 30-day lock)<br><span style="font-size:10px;color:#9ca3af;font-weight:400">before LLPA adjustments</span></td>
-            <td style="color:${(s.basePoints ?? baseNetPoints) <= 0 ? '#16a34a' : '#dc2626'}">${(s.basePoints ?? baseNetPoints) <= 0 ? '' : '+'}${(s.basePoints ?? baseNetPoints).toFixed(3)}%</td>
-            <td style="color:${(s.basePoints ?? baseNetPoints) <= 0 ? '#16a34a' : '#dc2626'};font-size:11px">${(s.basePoints ?? baseNetPoints) <= 0 ? '-' : '+'}${money(Math.abs((s.basePoints ?? baseNetPoints) / 100 * loan))}</td>
-          </tr>
-          ${llpaSection}
-          <tr class="subtotal-row">
-            <td style="font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:0.04em;color:#374151">Net Lender Price (after all LLPAs)</td>
-            <td style="color:${baseNetPoints <= 0 ? '#16a34a' : '#d97706'}">${baseNetPoints <= 0 ? '' : '+'}${baseNetPoints.toFixed(3)}%</td>
-            <td style="color:${baseNetPoints <= 0 ? '#16a34a' : '#d97706'};font-size:11px">${baseNetPoints <= 0 ? '-' : '+'}${money(Math.abs(baseNetPoints / 100 * loan))}</td>
-          </tr>
-          <tr class="margin-row">
-            <td>Broker Margin (${marginBPS} BPS)<br><span style="font-size:10px;color:#d97706;font-weight:400">your compensation — added to price</span></td>
-            <td style="color:#d97706">+${brokerMarginPct.toFixed(3)}%</td>
-            <td style="color:#d97706;font-size:11px">+${money(marginDollarAmt)}</td>
-          </tr>
-          ${s.borrowerPaysPct > 0 ? `<tr class="points-row">
-            <td>Discount Points Charged to Client (${s.borrowerPaysPct.toFixed(3)}%)<br><span style="font-size:10px;color:#dc2626;font-weight:400">rolled into loan or paid at closing</span></td>
-            <td style="color:#dc2626">+${s.borrowerPaysPct.toFixed(3)}%</td>
-            <td style="color:#dc2626;font-size:11px">+${money(s.pointsCost)}</td>
-          </tr>` : ''}
-          <tr class="final-row">
-            <td>Final Client Price<br><span style="font-size:10px;color:#3b82f6;font-weight:400">${s.lenderCreditPct > 0 ? 'credit applied toward closing costs' : s.borrowerPaysPct > 0 ? 'discount points charged to borrower' : 'par — no cost to borrower, no credit'}</span></td>
-            <td style="color:${s.lenderCreditPct > 0 ? '#16a34a' : s.borrowerPaysPct > 0 ? '#dc2626' : '#1d4ed8'}">${s.lenderCreditPct > 0 ? '-' + s.lenderCreditPct.toFixed(3) + '%' : s.borrowerPaysPct > 0 ? '+' + s.borrowerPaysPct.toFixed(3) + '%' : '0.000%'}</td>
-            <td style="color:${s.lenderCreditPct > 0 ? '#16a34a' : s.borrowerPaysPct > 0 ? '#dc2626' : '#1d4ed8'}">${s.lenderCreditPct > 0 ? '-' + money(s.lenderCredit) : s.borrowerPaysPct > 0 ? '+' + money(s.pointsCost) : '$0'}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="lo-narrative">
-      <strong>Price build:</strong> UWM sheet at <strong>${s.rate?.toFixed(3)}%</strong> → base price <strong>${(s.basePoints ?? baseNetPoints) <= 0 ? Math.abs(s.basePoints ?? baseNetPoints).toFixed(3) + '% credit' : (s.basePoints ?? baseNetPoints).toFixed(3) + '% cost'}</strong> → after LLPAs: <strong>${baseNetPoints <= 0 ? Math.abs(baseNetPoints).toFixed(3) + '% credit' : baseNetPoints.toFixed(3) + '% cost'}</strong> → add <strong>${marginBPS} BPS margin</strong> → client gets <strong>${s.lenderCreditPct > 0 ? s.lenderCreditPct.toFixed(3) + '% credit (' + money(s.lenderCredit) + ')' : s.borrowerPaysPct > 0 ? 'charged ' + s.borrowerPaysPct.toFixed(3) + '% points (' + money(s.pointsCost) + ')' : 'par'}</strong>. YSP: <strong style="color:#16a34a">${money(yspEarned)}</strong>.
-    </div>
-  </div>` : ''}
+  <!-- internal pricing intentionally omitted from client PDF -->
 
   ${paidDebts.length > 0 ? `
   <!-- DEBTS PAID OFF -->
@@ -391,7 +328,8 @@ function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStr
 </html>`;
 }
 
-export default function AnalysisReport({ result, clientProfile, selectedDebts, marginBPS, marginDollar, lenderFees = 0, pricingStrategies = [], companyName = 'Priority 1 Lending' }) {
+export default function AnalysisReport({ result, clientProfile, selectedDebts, marginBPS, marginDollar, lenderFees = 0, pricingStrategies = [], userRole = 'lo', companyName = 'Priority 1 Lending' }) {
+  const isAdmin = userRole === 'admin';
   const [activeScenario, setActiveScenario] = useState(result.recommended);
   const [activeGoalTab, setActiveGoalTab] = useState('rate_term');
   const [productTab, setProductTab] = useState('fixed');
@@ -677,12 +615,13 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
           </div>
         </div>
 
-        {/* Internal Price Stack */}
-        {marginBPS > 0 && (() => {
-          const brokerMarginPct = (parseFloat(marginBPS) || 0) / 100;
+        {/* Internal Price Stack — admins/managers only; LOs never see the margin */}
+        {isAdmin && (s.marginBPS ?? marginBPS) > 0 && (() => {
+          const mBPS = s.marginBPS ?? marginBPS;
+          const brokerMarginPct = (parseFloat(mBPS) || 0) / 100;
           const baseNetPoints = (s.netPointsPct ?? 0) - brokerMarginPct;
           const marginDollarAmt = Math.round(brokerMarginPct / 100 * s.newLoanAmount);
-          const yspEarned = marginDollar ? parseFloat(marginDollar) : marginDollarAmt;
+          const yspEarned = marginDollarAmt;
           const loan = s.newLoanAmount;
 
           return (
@@ -703,7 +642,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                 <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
                   <div className="text-xs text-blue-500 font-bold uppercase mb-1">YSP Earned</div>
                   <div className="text-2xl font-black text-green-700">{money(yspEarned)}</div>
-                  <div className="text-xs text-gray-400">{marginBPS} BPS on {money(loan)}</div>
+                  <div className="text-xs text-gray-400">{mBPS} BPS on {money(loan)}</div>
                 </div>
                 <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
                   <div className="text-xs text-blue-500 font-bold uppercase mb-1">Net to Client</div>
@@ -778,7 +717,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
 
                       <tr className="border-b border-amber-100 bg-amber-50">
                         <td className="px-4 py-2.5 text-amber-800 font-semibold">
-                          Broker Margin ({marginBPS} BPS)
+                          Broker Margin ({mBPS} BPS)
                           <div className="text-xs text-amber-600 font-normal">your compensation — added to price</div>
                         </td>
                         <td className="px-4 py-2.5 text-right font-mono font-bold text-amber-700">+{brokerMarginPct.toFixed(3)}%</td>
@@ -815,7 +754,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                 </div>
 
                 <div className="mt-3 bg-blue-100 rounded-lg px-3 py-2.5 text-xs text-blue-800 leading-relaxed">
-                  <span className="font-bold">Price build:</span> UWM sheet at <span className="font-bold">{s.rate?.toFixed(3)}%</span> → base price <span className="font-bold">{(s.basePoints ?? baseNetPoints) <= 0 ? `${Math.abs(s.basePoints ?? baseNetPoints).toFixed(3)}% credit` : `${(s.basePoints ?? baseNetPoints).toFixed(3)}% cost`}</span> → after LLPAs: <span className="font-bold">{baseNetPoints <= 0 ? `${Math.abs(baseNetPoints).toFixed(3)}% credit` : `${baseNetPoints.toFixed(3)}% cost`}</span> → add <span className="font-bold">{marginBPS} BPS margin</span> → client gets <span className="font-bold">{s.lenderCreditPct > 0 ? `${s.lenderCreditPct.toFixed(3)}% credit (${money(s.lenderCredit)})` : s.borrowerPaysPct > 0 ? `charged ${s.borrowerPaysPct.toFixed(3)}% points (${money(s.pointsCost)})` : 'par'}</span>. YSP: <span className="font-bold text-green-800">{money(yspEarned)}</span>.
+                  <span className="font-bold">Price build:</span> UWM sheet at <span className="font-bold">{s.rate?.toFixed(3)}%</span> → base price <span className="font-bold">{(s.basePoints ?? baseNetPoints) <= 0 ? `${Math.abs(s.basePoints ?? baseNetPoints).toFixed(3)}% credit` : `${(s.basePoints ?? baseNetPoints).toFixed(3)}% cost`}</span> → after LLPAs: <span className="font-bold">{baseNetPoints <= 0 ? `${Math.abs(baseNetPoints).toFixed(3)}% credit` : `${baseNetPoints.toFixed(3)}% cost`}</span> → add <span className="font-bold">{mBPS} BPS margin</span> → client gets <span className="font-bold">{s.lenderCreditPct > 0 ? `${s.lenderCreditPct.toFixed(3)}% credit (${money(s.lenderCredit)})` : s.borrowerPaysPct > 0 ? `charged ${s.borrowerPaysPct.toFixed(3)}% points (${money(s.pointsCost)})` : 'par'}</span>. YSP: <span className="font-bold text-green-800">{money(yspEarned)}</span>.
                 </div>
               </div>
             </div>
