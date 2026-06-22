@@ -249,26 +249,43 @@ export default function AdminPortal({ user, profile, onExit }) {
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
               <h2 className="text-lg font-bold text-gray-900 mb-2">Upload New Rate Sheet</h2>
               <p className="text-gray-500 text-sm mb-4">Upload the UWM PDF rate sheet. Claude will parse it automatically and make it available to all LOs instantly.</p>
-              <label className={`flex flex-col items-center justify-center w-full h-36 border-2 border-dashed rounded-xl cursor-pointer transition-all ${uploadStatus === 'done' ? 'border-green-400 bg-green-50' : uploadStatus === 'error' ? 'border-red-400 bg-red-50' : 'border-blue-300 bg-blue-50 hover:bg-blue-100'}`}>
-                <input type="file" accept=".pdf" className="hidden" onChange={handleRateSheetUpload} disabled={uploadStatus === 'parsing' || uploadStatus === 'saving'} />
-                {uploadStatus === 'idle' || uploadStatus === 'done' || uploadStatus === 'error' ? (
-                  <>
-                    <div className="text-3xl mb-2">{uploadStatus === 'done' ? '✅' : uploadStatus === 'error' ? '❌' : '📄'}</div>
-                    <div className="font-semibold text-blue-700 text-sm">
-                      {uploadStatus === 'done' ? 'Uploaded! Click to replace' : 'Click to upload UWM rate sheet PDF'}
-                    </div>
-                    <div className="text-blue-500 text-xs mt-1">PDF only · Claude parses automatically</div>
-                  </>
-                ) : (
-                  <>
-                    <div className="text-3xl mb-2 animate-spin">⚙️</div>
-                    <div className="font-semibold text-blue-700 text-sm">
-                      {uploadStatus === 'parsing' ? 'Claude is parsing the rate sheet...' : 'Saving to database...'}
-                    </div>
-                    <div className="text-blue-500 text-xs mt-1">This takes 15-30 seconds</div>
-                  </>
-                )}
-              </label>
+              {(() => {
+                const fileInputRef = { current: null };
+                const isProcessing = uploadStatus === 'parsing' || uploadStatus === 'saving';
+                const handleDrop = (e) => {
+                  e.preventDefault();
+                  if (isProcessing) return;
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) handleRateSheetUpload({ target: { files: [file] } });
+                };
+                return (
+                  <div
+                    className={`flex flex-col items-center justify-center w-full h-36 border-2 border-dashed rounded-xl cursor-pointer transition-all ${uploadStatus === 'done' ? 'border-green-400 bg-green-50' : uploadStatus === 'error' ? 'border-red-400 bg-red-50' : isProcessing ? 'border-blue-400 bg-blue-50' : 'border-blue-300 bg-blue-50 hover:bg-blue-100'}`}
+                    onClick={() => !isProcessing && document.getElementById('rate-sheet-input').click()}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={handleDrop}
+                  >
+                    <input id="rate-sheet-input" type="file" accept=".pdf" className="hidden" onChange={handleRateSheetUpload} disabled={isProcessing} />
+                    {!isProcessing ? (
+                      <>
+                        <div className="text-3xl mb-2">{uploadStatus === 'done' ? '✅' : uploadStatus === 'error' ? '❌' : '📄'}</div>
+                        <div className="font-semibold text-blue-700 text-sm">
+                          {uploadStatus === 'done' ? 'Uploaded! Click or drag to replace' : 'Click or drag & drop UWM rate sheet PDF'}
+                        </div>
+                        <div className="text-blue-500 text-xs mt-1">PDF only · Claude parses automatically</div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="text-3xl mb-2">⚙️</div>
+                        <div className="font-semibold text-blue-700 text-sm">
+                          {uploadStatus === 'parsing' ? 'Claude is parsing the rate sheet...' : 'Saving to database...'}
+                        </div>
+                        <div className="text-blue-500 text-xs mt-1">This takes 15-30 seconds</div>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* History */}
@@ -470,3 +487,4 @@ export default function AdminPortal({ user, profile, onExit }) {
     </div>
   );
 }
+
