@@ -153,7 +153,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     }));
     if (b.isVeteran !== undefined) setIsVeteran(b.isVeteran);
     if (crmSession.debts?.length) {
-      setDebts(crmSession.debts.map(d => ({ ...d, selected: true })));
+      setDebts(crmSession.debts.map(d => ({ ...d, selected: false, analysis: analyzeDebt(d, 6.5) })));
     }
     if (crmSession.source) {
       setCrmBadge(`Data pre-loaded from CRM`);
@@ -223,8 +223,9 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
       const fico = data.ficoScores?.transunion || data.ficoScores?.equifax || data.ficoScores?.experian;
       if (fico) setP('ficoScore', fico);
       const tradelineDebts = (data.tradelines || [])
-        .map(t => ({ ...t, selected: true, analysis: analyzeDebt(t, 6.5) }))
-        .sort((a, b) => (parseFloat(b.payment) || 0) - (parseFloat(a.payment) || 0));
+        .map(t => ({ ...t, selected: false, analysis: analyzeDebt(t, 6.5) }))
+        // Sort by payment-to-balance ratio descending — best DTI-relief-per-dollar first
+        .sort((a, b) => (b.analysis?.paymentToBalanceRatio || 0) - (a.analysis?.paymentToBalanceRatio || 0));
       // Prepend mortgage as first item (display only — not payable, just shown for context)
       const mortgageItem = data.mortgage ? [{
         name: data.mortgage.lender || 'Current Mortgage',
@@ -293,6 +294,10 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
   const handleToggleDebt = (index) => setDebts(prev => prev.map((d, i) => i === index ? { ...d, selected: !d.selected } : d));
   const handleAddDebt = (debt) => setDebts(prev => [...prev, { ...debt, selected: true, analysis: analyzeDebt(debt, parseFloat(profile.manualRate) || 6.5) }]);
+  // Select all debts the optimizer flags as 'recommended' (high relief ratio, efficient to consolidate)
+  const handleSelectRecommended = () => setDebts(prev => prev.map(d =>
+    d.isMortgage ? d : { ...d, selected: d.analysis?.badge === 'recommended' ? true : d.selected }
+  ));
   const toggleProgram = (p) => setSelectedPrograms(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]);
 
   const canProceed = (s) => {
@@ -592,7 +597,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
             {debts.length === 0 ? (
               <div className="text-center py-8 text-gray-400"><FileText className="w-12 h-12 mx-auto mb-3 opacity-30" /><p>No debts parsed. Add manually below.</p></div>
             ) : (
-              <DebtChecklist debts={debts} onToggle={handleToggleDebt} onAddDebt={handleAddDebt} />
+              <DebtChecklist debts={debts} onToggle={handleToggleDebt} onAddDebt={handleAddDebt} onSelectRecommended={handleSelectRecommended} />
             )}
           </Card>
         )}
