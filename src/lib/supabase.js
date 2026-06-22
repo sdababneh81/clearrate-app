@@ -169,3 +169,25 @@ export async function deleteSavedAnalysis(id) {
   const { error } = await supabase.from('saved_analyses').delete().eq('id', id)
   if (error) throw error
 }
+
+// ─── App settings: per-program margins (admin-controlled, hidden from LOs) ────
+// Margins stored in BPS, keyed by base loan type: conventional | fha | va.
+export async function getMarginSettings() {
+  const { data, error } = await supabase
+    .from('app_settings')
+    .select('margins')
+    .eq('id', 1)
+    .maybeSingle()
+  if (error) throw error
+  return data?.margins || { conventional: 0, fha: 0, va: 0 }
+}
+
+export async function saveMarginSettings(margins, userId) {
+  const { data, error } = await supabase
+    .from('app_settings')
+    .upsert({ id: 1, margins, updated_at: new Date().toISOString(), updated_by: userId })
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
