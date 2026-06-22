@@ -436,44 +436,136 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
 
         {/* LO-only: Compensation / YSP box — not shown to client */}
         {marginBPS > 0 && (() => {
-          const lenderNetPoints = s.netPointsPct ?? 0; // net after margin (what borrower sees)
           const brokerMarginPct = (parseFloat(marginBPS) || 0) / 100;
-          const baseNetPoints = lenderNetPoints - brokerMarginPct; // what lender is actually paying
-          const lenderCreditToLO = baseNetPoints < 0 ? Math.abs(baseNetPoints) : 0;
-          const loEarned = Math.round((brokerMarginPct / 100) * s.newLoanAmount);
-          const loEarnedDisplay = marginDollar ? money(parseFloat(marginDollar)) : money(loEarned);
+          // baseNetPoints = what the lender sheet actually pays (before broker margin)
+          // clientNetPoints (s.netPointsPct) = baseNetPoints + brokerMarginPct
+          const baseNetPoints = (s.netPointsPct ?? 0) - brokerMarginPct;
+          const baseDollar = Math.round(Math.abs(baseNetPoints) / 100 * s.newLoanAmount);
+          const marginDollarAmt = Math.round(brokerMarginPct / 100 * s.newLoanAmount);
+          const yspEarned = marginDollar ? parseFloat(marginDollar) : marginDollarAmt;
+
+          // Build price stack rows
+          // UWM rate sheet shows "net points" already adjusted for standard LLPAs
+          // We show: Base Price → LLPA hits → Net Lender Price → Broker Margin → Final Client Price
+          const priceRows = [
+            {
+              label: 'Rate',
+              value: `${s.rate?.toFixed(3)}%`,
+              note: s.isARM ? (s.armType || 'ARM') : '30-Year Fixed',
+              style: 'header',
+            },
+            {
+              label: 'Lender Base Price (from rate sheet)',
+              value: baseNetPoints <= 0
+                ? `-${Math.abs(baseNetPoints).toFixed(3)}%`
+                : `+${baseNetPoints.toFixed(3)}%`,
+              dollar: baseNetPoints <= 0
+                ? `-${money(baseDollar)}`
+                : `+${money(baseDollar)}`,
+              note: baseNetPoints <= 0 ? 'lender paying credit' : 'cost to borrower',
+              style: baseNetPoints <= 0 ? 'credit' : 'cost',
+            },
+            {
+              label: `Broker Margin (${marginBPS} BPS)`,
+              value: `+${brokerMarginPct.toFixed(3)}%`,
+              dollar: `+${money(marginDollarAmt)}`,
+              note: 'your compensation — added to price',
+              style: 'margin',
+            },
+            {
+              label: 'Final Client Price',
+              value: s.lenderCreditPct > 0
+                ? `-${s.lenderCreditPct.toFixed(3)}% credit`
+                : s.borrowerPaysPct > 0
+                  ? `+${s.borrowerPaysPct.toFixed(3)}% points`
+                  : 'Par (0.000%)',
+              dollar: s.lenderCreditPct > 0
+                ? `-${money(s.lenderCredit)}`
+                : s.borrowerPaysPct > 0
+                  ? `+${money(s.pointsCost)}`
+                  : '$0',
+              note: s.lenderCreditPct > 0
+                ? 'client receives as closing credit'
+                : s.borrowerPaysPct > 0
+                  ? 'client pays as discount points'
+                  : 'no cost to client, no credit',
+              style: 'final',
+            },
+          ];
+
           return (
             <div className="border-b border-blue-200 bg-blue-50">
               <div className="bg-blue-100 px-4 py-2 text-xs font-bold uppercase tracking-wider text-blue-700 flex items-center gap-2">
-                <span>🔒</span> LO Compensation Summary — Internal Only
+                <span>🔒</span> Internal Pricing & Compensation — Not for Client
               </div>
-              <div className="px-4 py-3 space-y-2 text-sm">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-white rounded-lg p-3 border border-blue-100">
-                    <div className="text-xs text-blue-500 font-medium mb-1">Rate Locked</div>
-                    <div className="font-bold text-gray-900 text-lg">{pct(s.rate)}</div>
-                    <div className="text-xs text-gray-500">{s.isARM ? (s.armType || 'ARM') : '30-Year Fixed'}</div>
+              <div className="px-4 py-4 space-y-3">
+
+                {/* Price Stack Table */}
+                <div className="bg-white rounded-xl border border-blue-200 overflow-hidden">
+                  <div className="bg-blue-700 px-4 py-2">
+                    <div className="text-xs font-bold text-blue-100 uppercase tracking-wider">Price Stack — {s.program} {s.rate?.toFixed(3)}%</div>
                   </div>
-                  <div className="bg-white rounded-lg p-3 border border-blue-100">
-                    <div className="text-xs text-blue-500 font-medium mb-1">Broker Margin</div>
-                    <div className="font-bold text-gray-900 text-lg">{marginBPS} BPS</div>
-                    <div className="text-xs text-gray-500">{(brokerMarginPct).toFixed(3)}% of loan</div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-blue-100 bg-blue-50">
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-blue-600">Item</th>
+                        <th className="text-right px-4 py-2 text-xs font-semibold text-blue-600">Points %</th>
+                        <th className="text-right px-4 py-2 text-xs font-semibold text-blue-600">Dollar</th>
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-blue-600 hidden sm:table-cell">Note</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {priceRows.map((row, i) => (
+                        <tr key={i} className={`border-b border-blue-50 ${
+                          row.style === 'final' ? 'bg-blue-50 font-bold' :
+                          row.style === 'margin' ? 'bg-amber-50' : ''
+                        }`}>
+                          <td className={`px-4 py-2.5 font-medium ${
+                            row.style === 'final' ? 'text-blue-900' :
+                            row.style === 'margin' ? 'text-amber-800' : 'text-gray-700'
+                          }`}>{row.label}</td>
+                          <td className={`px-4 py-2.5 text-right font-mono font-bold ${
+                            row.style === 'credit' || (row.style === 'final' && s.lenderCreditPct > 0) ? 'text-green-700' :
+                            row.style === 'cost' || (row.style === 'final' && s.borrowerPaysPct > 0) ? 'text-red-600' :
+                            row.style === 'margin' ? 'text-amber-700' :
+                            row.style === 'final' ? 'text-blue-700' : 'text-gray-900'
+                          }`}>{row.value}</td>
+                          <td className={`px-4 py-2.5 text-right font-mono text-xs ${
+                            row.style === 'credit' || (row.style === 'final' && s.lenderCreditPct > 0) ? 'text-green-600' :
+                            row.style === 'cost' || (row.style === 'final' && s.borrowerPaysPct > 0) ? 'text-red-500' :
+                            row.style === 'margin' ? 'text-amber-600' : 'text-gray-500'
+                          }`}>{row.dollar || '—'}</td>
+                          <td className="px-4 py-2.5 text-xs text-gray-400 hidden sm:table-cell">{row.note}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* YSP Summary */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
+                    <div className="text-xs text-blue-500 font-semibold uppercase mb-1">Rate</div>
+                    <div className="font-bold text-gray-900 text-lg">{s.rate?.toFixed(3)}%</div>
+                    <div className="text-xs text-gray-400">{s.isARM ? 'ARM' : '30yr Fixed'}</div>
                   </div>
-                  <div className="bg-white rounded-lg p-3 border border-blue-100">
-                    <div className="text-xs text-blue-500 font-medium mb-1">YSP Earned</div>
-                    <div className="font-bold text-green-700 text-lg">{loEarnedDisplay}</div>
-                    <div className="text-xs text-gray-500">earned as yield spread</div>
+                  <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
+                    <div className="text-xs text-blue-500 font-semibold uppercase mb-1">YSP Earned</div>
+                    <div className="font-bold text-green-700 text-lg">{money(yspEarned)}</div>
+                    <div className="text-xs text-gray-400">{marginBPS} BPS on {money(s.newLoanAmount)}</div>
                   </div>
-                  <div className="bg-white rounded-lg p-3 border border-blue-100">
-                    <div className="text-xs text-blue-500 font-medium mb-1">Lender Base Price</div>
+                  <div className="bg-white rounded-xl border border-blue-200 p-3 text-center">
+                    <div className="text-xs text-blue-500 font-semibold uppercase mb-1">Lender Base</div>
                     <div className={`font-bold text-lg ${baseNetPoints <= 0 ? 'text-green-700' : 'text-amber-700'}`}>
-                      {baseNetPoints <= 0 ? `${Math.abs(baseNetPoints).toFixed(3)}% credit` : `${baseNetPoints.toFixed(3)}% cost`}
+                      {baseNetPoints <= 0 ? `${Math.abs(baseNetPoints).toFixed(3)}% cr` : `${baseNetPoints.toFixed(3)}% cost`}
                     </div>
-                    <div className="text-xs text-gray-500">before your margin</div>
+                    <div className="text-xs text-gray-400">sheet price pre-margin</div>
                   </div>
                 </div>
-                <div className="bg-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700 font-medium">
-                  Rate {pct(s.rate)} pays lender credit of {baseNetPoints <= 0 ? `${Math.abs(baseNetPoints).toFixed(3)}%` : '0%'} → your {marginBPS} BPS margin consumes {brokerMarginPct.toFixed(3)}% → borrower {s.lenderCreditPct > 0 ? `receives ${s.lenderCreditPct?.toFixed(3)}% credit (${money(s.lenderCredit)})` : s.borrowerPaysPct > 0 ? `pays ${s.borrowerPaysPct?.toFixed(3)}% in points (${money(s.pointsCost)})` : 'at par'}
+
+                {/* Narrative */}
+                <div className="bg-blue-100 rounded-lg px-3 py-2.5 text-xs text-blue-800 leading-relaxed">
+                  <span className="font-bold">Price build:</span> UWM rate sheet at {s.rate?.toFixed(3)}% shows <span className="font-semibold">{baseNetPoints <= 0 ? `${Math.abs(baseNetPoints).toFixed(3)}% lender credit` : `${baseNetPoints.toFixed(3)}% cost`}</span> as the base price. After adding your <span className="font-semibold">{marginBPS} BPS broker margin</span>, the final price to client is <span className="font-semibold">{s.lenderCreditPct > 0 ? `${s.lenderCreditPct.toFixed(3)}% credit (${money(s.lenderCredit)})` : s.borrowerPaysPct > 0 ? `${s.borrowerPaysPct.toFixed(3)}% in points (${money(s.pointsCost)})` : 'par — no cost, no credit'}</span>. Your YSP is <span className="font-semibold text-green-800">{money(yspEarned)}</span>.
                 </div>
               </div>
             </div>
@@ -524,6 +616,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
     </div>
   );
 }
+
 
 
 
