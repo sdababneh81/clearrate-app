@@ -4,7 +4,7 @@ import DropZone from './components/DropZone';
 import DebtChecklist from './components/DebtChecklist';
 import AnalysisReport from './components/AnalysisReport';
 import { parseCreditReport, parseRateSheet } from './utils/claudeParser';
-import { getActiveRateSheet, saveAnalysis, getSavedAnalyses, getSavedAnalysis, deleteSavedAnalysis, getMarginSettings, renameAnalysis, duplicateAnalysis } from './lib/supabase.js';
+import { getActiveRateSheet, saveAnalysis, getSavedAnalyses, getSavedAnalysis, deleteSavedAnalysis, getMarginSettings, renameAnalysis, duplicateAnalysis, findAnalysisByBorrower } from './lib/supabase.js';
 import { analyzeDebt } from './utils/debtOptimizer';
 import { generateScenarios } from './utils/scenarioEngine';
 import { calcPI, reverseEngineerTerm } from './utils/mortgageCalc';
@@ -462,10 +462,21 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
           rate: rec.rate, monthlySavings: rec.monthlySavings, program: rec.program,
           isARM: rec.isARM, goal: rec.goal, newLoanAmount: rec.newLoanAmount,
         } : null;
+        // If we're not already tied to a file, look for an existing file for this
+        // same borrower (name + property address) and overwrite it instead of
+        // creating a duplicate. New borrower/address → new file.
+        let targetId = currentFileId;
+        if (!targetId) {
+          try {
+            const existing = await findAnalysisByBorrower(user.id, profile.borrowerName, profile.propertyAddress);
+            if (existing) targetId = existing.id;
+          } catch (e) { console.warn('[autosave] borrower lookup failed, will create new:', e); }
+        }
         const saved = await saveAnalysis({
-          id: currentFileId || undefined,
+          id: targetId || undefined,
           fileName: (currentFileName || profile.borrowerName || 'Untitled').trim(),
           borrowerName: profile.borrowerName || 'Untitled',
+          propertyAddress: profile.propertyAddress || null,
           snapshot: buildSnapshot(),
           userId: user.id,
           runRef: rr,
@@ -534,6 +545,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         id: asNew ? undefined : (currentFileId || undefined),
         fileName: asNew ? `${name} (v2)` : name,
         borrowerName: profile.borrowerName || name,
+        propertyAddress: profile.propertyAddress || null,
         snapshot: buildSnapshot(),
         userId: user.id,
         runRef: result?.runRef || currentRunRef || null,
