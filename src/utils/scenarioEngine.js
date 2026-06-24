@@ -193,6 +193,20 @@ export function generateScenarios({
         const isArm = isARMProgram(program);
         const progMargin = resolveMargin(program.type);
 
+        // ── Elite eligibility gate ────────────────────────────────────────────
+        // UWM Elite requires 700+ FICO (or 720+ VantageScore), LTV ≤ 80%, loan ≥ $125K.
+        // If the borrower doesn't meet all three, don't show Elite — it's not available
+        // to them, so pricing it would be misleading.
+        if ((program.type || '').toLowerCase().includes('elite')) {
+          const propValueE = parseFloat(estimatedValue) || 0;
+          const eliteLTV = propValueE > 0 ? (baseLoanAmount / propValueE) * 100 : null;
+          const eFico = parseFloat(ficoScore) || 0;
+          const eligible = eFico >= 700
+            && (eliteLTV == null || eliteLTV <= 80 + 1e-9)
+            && baseLoanAmount >= 125000;
+          if (!eligible) continue;
+        }
+
         // ── Apply the LLPA grid for THIS borrower, THIS goal ──────────────────
         // LTV is the new loan over the property value for this goal (cash-out raises it).
         // If the sheet carries a grid, recompute each rate's netPoints from its
