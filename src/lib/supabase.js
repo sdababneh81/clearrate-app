@@ -176,14 +176,15 @@ export async function getSavedAnalyses(userId) {
   return data || []
 }
 
-export async function getSavedAnalysis(id) {
-  const { data, error } = await supabase
+export async function getSavedAnalysis(id, userId) {
+  let q = supabase
     .from('saved_analyses')
     .select('*')
     .eq('id', id)
-    .maybeSingle()
+  if (userId) q = q.eq('lo_user_id', userId)
+  const { data, error } = await q.limit(1)
   if (error) throw error
-  return data
+  return (data && data[0]) || null
 }
 
 export async function renameAnalysis(id, fileName) {
