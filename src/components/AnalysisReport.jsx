@@ -1,5 +1,27 @@
 import { useState, useRef } from 'react';
-import { Star, TrendingDown, Clock, DollarSign, CheckCircle, AlertCircle, Printer } from 'lucide-react';
+import { Star, TrendingDown, Clock, DollarSign, CheckCircle, AlertCircle, Printer, ChevronRight, LayoutList, Rows } from 'lucide-react';
+
+// Collapsible section for the on-screen report. In "full" mode it renders the
+// content plainly (no header/toggle). In "compact" mode it shows a clickable
+// header bar with a summary line and expands/collapses the body. Print is a
+// separate HTML window, so collapsing here never affects the client PDF.
+function CollapsibleSection({ title, summary, defaultOpen = false, compact, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (!compact) return <>{children}</>;
+  return (
+    <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors">
+        <span className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+          <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+          {title}
+        </span>
+        {summary && <span className="text-xs text-gray-500 font-medium">{summary}</span>}
+      </button>
+      {open && <div className="border-t border-gray-100">{children}</div>}
+    </div>
+  );
+}
 
 const money = v => '$' + Math.round(Math.abs(v || 0)).toLocaleString();
 const pct = v => parseFloat(v).toFixed(3) + '%';
@@ -333,6 +355,7 @@ function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStr
 export default function AnalysisReport({ result, clientProfile, selectedDebts, marginBPS, marginDollar, lenderFees = 0, pricingStrategies = [], userRole = 'lo', companyName = 'Priority 1 Lending' }) {
   const isAdmin = userRole === 'admin';
   const [activeScenario, setActiveScenario] = useState(result.recommended);
+  const [viewMode, setViewMode] = useState('compact');  // 'compact' (collapsed sections) | 'full'
   const [activeGoalTab, setActiveGoalTab] = useState(result.recommended?.goal || 'rate_term');
   const [productTab, setProductTab] = useState(result.recommended?.isARM ? 'arm' : 'fixed');
   const [activeStrategy, setActiveStrategy] = useState(
@@ -432,8 +455,18 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
         </div>
       )}
 
-      {/* Print button */}
-      <div className="flex justify-end">
+      {/* Print + view toggle */}
+      <div className="flex justify-end items-center gap-2">
+        <div className="bg-gray-100 rounded-xl p-1 flex gap-1 no-print">
+          <button onClick={() => setViewMode('compact')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${viewMode === 'compact' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+            <Rows className="w-3.5 h-3.5" /> Compact
+          </button>
+          <button onClick={() => setViewMode('full')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${viewMode === 'full' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
+            <LayoutList className="w-3.5 h-3.5" /> Full
+          </button>
+        </div>
         <button onClick={handlePrint}
           className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm">
           <Printer className="w-4 h-4" />
@@ -581,6 +614,9 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
         </div>
 
         {/* Loan Balance Breakdown */}
+        <CollapsibleSection compact={viewMode === 'compact'}
+          title="New Loan Balance Breakdown"
+          summary={`${money(s.newLoanAmount)}${clientProfile.estimatedValue ? ` · LTV ${Math.round((s.newLoanAmount / parseFloat(clientProfile.estimatedValue)) * 100)}%` : ''}`}>
         <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
           <div className="bg-gray-50 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-200">
             New Loan Balance Breakdown
@@ -620,6 +656,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
             </div>
           </div>
         </div>
+        </CollapsibleSection>
 
         {/* Internal Price Stack — admins/managers only; LOs never see the margin */}
         {isAdmin && (() => {
@@ -777,6 +814,9 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
 
         {/* Debts paid off */}
         {paidDebts.length > 0 && (
+          <CollapsibleSection compact={viewMode === 'compact'}
+            title="Debts Paid Off at Closing"
+            summary={`${paidDebts.length} ${paidDebts.length === 1 ? 'debt' : 'debts'} · ${money(s.debtBalanceTotal)}`}>
           <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
             <div className="bg-gray-50 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-200">Debts Paid Off at Closing</div>
             <table className="w-full text-sm">
@@ -805,6 +845,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
               </tbody>
             </table>
           </div>
+          </CollapsibleSection>
         )}
 
         {/* Disclaimer */}
