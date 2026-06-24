@@ -1144,6 +1144,11 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
               </button>
             </div>
             <div className="overflow-y-auto flex-1 p-3">
+              {error && (
+                <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg mb-3 text-xs">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /><span>{error}</span>
+                </div>
+              )}
               {filesLoading ? (
                 <div className="py-12 text-center text-gray-400 text-sm flex items-center justify-center gap-2">
                   <Loader className="w-4 h-4 animate-spin" /> Loading files…
