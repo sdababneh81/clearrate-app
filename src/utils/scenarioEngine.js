@@ -1,4 +1,5 @@
 import { calcPI, calcBreakeven, scoreRateOption, analyzeRateStack, selectRateForStrategy } from './mortgageCalc.js';
+import { applyLLPA } from './llpaEngine.js';
 
 const PROGRAMS_30YR = ['Conventional', 'VA', 'FHA'];
 const PROGRAMS_15YR = ['Conventional 15yr', 'VA 15yr', 'FHA 15yr'];
@@ -192,7 +193,25 @@ export function generateScenarios({
         const isArm = isARMProgram(program);
         const progMargin = resolveMargin(program.type);
 
-        const analyzedRates = analyzeRateStack(rawRates, progMargin);
+        // ── Apply the LLPA grid for THIS borrower, THIS goal ──────────────────
+        // LTV is the new loan over the property value for this goal (cash-out raises it).
+        // If the sheet carries a grid, recompute each rate's netPoints from its
+        // base price + the borrower's hits. Old sheets (no grid) fall back to the
+        // stored netPoints unchanged, so nothing breaks until a fresh re-upload.
+        const grid = rateSheet?.llpaGrid || rateSheet?.llpa_grid || null;
+        const propValue = parseFloat(estimatedValue) || 0;
+        const borrowerLTV = propValue > 0 ? Math.round((baseLoanAmount / propValue) * 1000) / 10 : null;
+        const llpa = grid
+          ? applyLLPA(grid, { fico: parseFloat(ficoScore) || null, ltv: borrowerLTV, isCashOut: goal === 'cash_out', flags: clientProfile.llpaFlags })
+          : { totalHit: 0, hits: null };
+
+        const ratesForStack = rawRates.map(r => {
+          const base = r.basePoints != null ? parseFloat(r.basePoints) : parseFloat(r.netPoints);
+          const net = grid ? base + llpa.totalHit : (r.netPoints != null ? parseFloat(r.netPoints) : base);
+          return { rate: parseFloat(r.rate), netPoints: net, basePoints: base, adjustedRate: parseFloat(r.rate) };
+        }).filter(r => !isNaN(r.rate) && !isNaN(r.netPoints));
+
+        const analyzedRates = analyzeRateStack(ratesForStack, progMargin);
 
         const selected = selectRateForStrategy(
           analyzedRates, strategy, baseLoanAmount,
@@ -208,7 +227,9 @@ export function generateScenarios({
           rate: selected.adjustedRate,
           netPoints: selected.netPoints,
           basePoints: selected.basePoints ?? selected.netPoints,
-          llpaHits: rateSheet?.borrowerLLPAs || null,
+          // Itemized, borrower-specific hits from the grid (admin-only display).
+          // Fall back to any pre-baked borrowerLLPAs on legacy sheets.
+          llpaHits: (grid && llpa.hits?.length) ? llpa.hits : (rateSheet?.borrowerLLPAs || null),
           program: program.type,
           goal, loanAmount: baseLoanAmount, termYears: term,
           clientProfile: { ...clientProfile, cashOutAmount: cashOut },
