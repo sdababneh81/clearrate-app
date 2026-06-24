@@ -1,37 +1,60 @@
 /**
- * ClearRate — deterministic LLPA application.
+ * ClearRate — deterministic LLPA application, modeled on the real UWM rate sheet.
  *
- * The rate sheet is uploaded as BASE prices plus a raw LLPA grid (FICO x LTV
- * matrix, cash-out adjustments, and situational "other" hits). We apply that grid
- * against the REAL borrower at analysis time — no AI, fully auditable, same inputs
- * always yield the same hits. This replaces the old approach of baking LLPAs against
- * a hardcoded fake 700-FICO / 75-LTV borrower at upload time.
+ * UWM uses TWO different adjustment systems:
+ *   • Conventional: full FICO × LTV matrices, separate for Purchase / Rate-Term / Cash-Out.
+ *   • Government (VA/FHA): a flat FICO adjustor (not LTV-dependent), plus a few VA specials
+ *     (e.g. VA Cash-Out LTV > 90% = +1.250).
+ *
+ * The sheet is uploaded as base prices + this grid; we apply it against the REAL borrower
+ * (FICO / LTV / purpose) at analysis time — deterministic, itemized, no AI call.
+ *
+ * Grid shape (from parseRateSheetBase):
+ * {
+ *   conventional: {
+ *     ltvBands:        [30,60,65,70,75,80,85,90,95,97],
+ *     cashOutLtvBands: [30,60,65,70,75,80,85,89.99],
+ *     rateTerm: [ { min:780, max:850, cols:[0,0,0,0,0.125,0.5,0.625,0.5,0.375,0.375] }, ... ],
+ *     cashOut:  [ { min:780, max:850, cols:[0.375,0.375,0.625,0.625,0.875,1.375,1.625,1.875] }, ... ],
+ *     purchase: [ ... ]   // optional
+ *   },
+ *   government: {
+ *     fico: [ {min:740,max:850,hit:-0.5}, {min:700,max:739,hit:-0.25}, {min:640,max:699,hit:0},
+ *             {min:620,max:639,hit:0.375}, {min:600,max:619,hit:0.625}, {min:580,max:599,hit:1.0} ],
+ *     vaCashOutOver90: 1.25
+ *   }
+ * }
  */
 
-// Standard LTV column thresholds used by UWM-style grids (upper bounds).
-const LTV_COLS = [60, 65, 70, 75, 80, 85, 90, 95, 97];
-
-function ltvColumnKey(ltv) {
-  if (ltv == null || isNaN(ltv)) return null;
-  for (const t of LTV_COLS) {
-    if (ltv <= t + 1e-9) return `ltv_${t}`;
+function findBand(bands, fico) {
+  if (!Array.isArray(bands) || fico == null) return null;
+  let b = bands.find(x => fico >= (x.min ?? -Infinity) && fico <= (x.max ?? Infinity));
+  if (!b) {
+    const sorted = [...bands].sort((a, c) => (a.min ?? 0) - (c.min ?? 0));
+    b = fico < (sorted[0].min ?? 0) ? sorted[0] : sorted[sorted.length - 1]; // clamp
   }
-  return `ltv_97`; // anything above 97 clamps to the top column
+  return b;
 }
 
-function ltvColumnLabel(ltv) {
-  if (ltv == null || isNaN(ltv)) return '';
-  for (const t of LTV_COLS) {
-    if (ltv <= t + 1e-9) return `≤${t}%`;
+// Map an LTV to the column index, given the ordered upper-bound bands.
+function ltvColIndex(ltvBands, ltv) {
+  if (!Array.isArray(ltvBands) || ltv == null) return -1;
+  for (let i = 0; i < ltvBands.length; i++) {
+    if (ltv <= ltvBands[i] + 1e-9) return i;
   }
-  return '>97%';
+  return ltvBands.length - 1; // above the top band → clamp to last column
+}
+
+function ltvColLabel(ltvBands, idx) {
+  if (idx < 0) return '';
+  const hi = ltvBands[idx];
+  const lo = idx === 0 ? 0 : ltvBands[idx - 1];
+  return idx === 0 ? `≤${hi}%` : `${lo}.01-${hi}%`;
 }
 
 /**
- * Apply the LLPA grid for one borrower.
- *
- * @param grid     rateSheet.llpaGrid  { creditScore:[{min,max,adjustments:{ltv_XX:hit}}], cashOut:[{ltv_min,ltv_max,hit}], otherHits:[{description,hit,when?}] }
- * @param borrower { fico, ltv, isCashOut, flags? }   flags = { investment, units2, units3, units4, manufactured, secondHome, ... }
+ * @param grid     rateSheet.llpaGrid (shape above)
+ * @param borrower { loanType: 'conventional'|'va'|'fha', fico, ltv, isCashOut }
  * @returns { totalHit, hits:[{description, hit}] }
  */
 export function applyLLPA(grid, borrower) {
@@ -41,48 +64,38 @@ export function applyLLPA(grid, borrower) {
   const fico = borrower?.fico != null ? parseFloat(borrower.fico) : null;
   const ltv = borrower?.ltv != null ? parseFloat(borrower.ltv) : null;
   const isCashOut = !!borrower?.isCashOut;
-  const flags = borrower?.flags || {};
+  const lt = (borrower?.loanType || 'conventional').toLowerCase();
+  const isGov = lt === 'va' || lt === 'fha' || lt === 'government';
 
-  // ── FICO x LTV adjustment ──────────────────────────────────────────────
-  if (Array.isArray(grid.creditScore) && grid.creditScore.length && fico != null) {
-    // Find the FICO band; clamp to nearest if the borrower is below/above all bands.
-    let band = grid.creditScore.find(b => fico >= (b.min ?? -Infinity) && fico <= (b.max ?? Infinity));
-    if (!band) {
-      const sorted = [...grid.creditScore].sort((a, b) => (a.min ?? 0) - (b.min ?? 0));
-      band = fico < (sorted[0].min ?? 0) ? sorted[0] : sorted[sorted.length - 1];
-    }
-    const colKey = ltvColumnKey(ltv);
-    const adj = band?.adjustments ? band.adjustments[colKey] : null;
-    if (adj != null && !isNaN(parseFloat(adj)) && parseFloat(adj) !== 0) {
-      const lo = band.min ?? '', hi = band.max ?? '';
-      hits.push({
-        description: `Credit ${lo}-${hi} / LTV ${ltvColumnLabel(ltv)}`,
-        hit: parseFloat(adj),
-      });
-    }
-  }
-
-  // ── Cash-out adjustment ────────────────────────────────────────────────
-  if (isCashOut && Array.isArray(grid.cashOut) && grid.cashOut.length && ltv != null) {
-    const band = grid.cashOut.find(b =>
-      ltv >= (b.ltv_min ?? -Infinity) - 1e-9 && ltv <= (b.ltv_max ?? Infinity) + 1e-9);
+  if (isGov && grid.government) {
+    // ── VA / FHA: flat FICO adjustor ────────────────────────────────────
+    const band = findBand(grid.government.fico, fico);
     if (band && parseFloat(band.hit) !== 0 && !isNaN(parseFloat(band.hit))) {
-      hits.push({
-        description: `Cash-Out (LTV ${ltvColumnLabel(ltv)})`,
-        hit: parseFloat(band.hit),
-      });
+      hits.push({ description: `${lt.toUpperCase()} Credit ${band.min}-${band.max}`, hit: parseFloat(band.hit) });
     }
-  }
-
-  // ── Situational "other" hits — applied ONLY when we can confirm the flag ──
-  // We never auto-apply hits we can't verify (e.g. investment, 2-unit), because
-  // a standard primary SFR shouldn't silently inherit them. Flags must be set
-  // explicitly on the borrower profile.
-  if (Array.isArray(grid.otherHits)) {
-    for (const h of grid.otherHits) {
-      const key = (h.when || h.flag || '').toString();
-      if (key && flags[key] && parseFloat(h.hit) !== 0) {
-        hits.push({ description: h.description || key, hit: parseFloat(h.hit) });
+    // VA cash-out above 90% LTV
+    if (lt === 'va' && isCashOut && ltv != null && ltv > 90 && grid.government.vaCashOutOver90 != null) {
+      const h = parseFloat(grid.government.vaCashOutOver90);
+      if (h) hits.push({ description: 'VA Cash-Out LTV > 90%', hit: h });
+    }
+  } else if (grid.conventional) {
+    // ── Conventional: FICO × LTV matrix, by purpose ─────────────────────
+    const conv = grid.conventional;
+    const matrix = isCashOut ? (conv.cashOut || conv.rateTerm) : (conv.rateTerm || conv.purchase);
+    const ltvBands = isCashOut ? (conv.cashOutLtvBands || conv.ltvBands) : conv.ltvBands;
+    const band = findBand(matrix, fico);
+    const idx = ltvColIndex(ltvBands, ltv);
+    if (band && Array.isArray(band.cols) && idx >= 0) {
+      const raw = band.cols[idx];
+      const hit = (raw === 'NA' || raw == null) ? null : parseFloat(raw);
+      if (hit != null && !isNaN(hit) && hit !== 0) {
+        const purpose = isCashOut ? 'Cash-Out' : 'Rate/Term';
+        hits.push({
+          description: `${purpose} · Credit ${band.min}-${band.max} / LTV ${ltvColLabel(ltvBands, idx)}`,
+          hit,
+        });
+      } else if (raw === 'NA') {
+        hits.push({ description: `⚠️ Not eligible: Credit ${band.min}-${band.max} at LTV ${ltvColLabel(ltvBands, idx)}`, hit: 0, ineligible: true });
       }
     }
   }
