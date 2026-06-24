@@ -136,6 +136,8 @@ function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStr
     ['Title & Settlement Charges', s.titleCharges || parseFloat(clientProfile.titleCharges) || 0, ''],
     ...((s.lenderFees || lenderFees) > 0 ? [['Lender Fees', s.lenderFees || lenderFees, '']] : []),
     ...(s.cashOut > 0 ? [['Cash-Out Amount', s.cashOut, '']] : []),
+    ...(s.ufmip > 0 ? [['FHA Upfront MIP (1.75%, financed)', s.ufmip, 'amber']] : []),
+    ...(s.fundingFee > 0 ? [[`VA Funding Fee (${(s.fundingFeeRate * 100).toFixed(2)}%, financed)`, s.fundingFee, 'amber']] : []),
     ...(s.borrowerPaysPct > 0 ? [[`Discount Points (${s.borrowerPaysPct?.toFixed(3)}% of loan)`, s.pointsCost, 'amber']] : []),
     ...(s.lenderCreditPct > 0 ? [[`Lender Credit (${s.lenderCreditPct?.toFixed(3)}% of loan)`, -s.lenderCredit, 'green']] : []),
   ].filter(([, v]) => v !== 0 && v != null);
@@ -280,8 +282,8 @@ function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStr
       </div>
       <div class="kpi-cell">
         <div class="kpi-label">After Refinance</div>
-        <div class="kpi-value">${money(s.newPI + parseFloat(clientProfile.escrow || 0))}/mo</div>
-        <div class="kpi-sub">P&amp;I: ${money(s.newPI)} + Escrow: ${money(clientProfile.escrow || 0)}</div>
+        <div class="kpi-value">${money(s.newPI + (s.monthlyInsurance || 0) + parseFloat(clientProfile.escrow || 0))}/mo</div>
+        <div class="kpi-sub">P&amp;I: ${money(s.newPI)}${s.monthlyMIP > 0 ? ` + MIP: ${money(s.monthlyMIP)}` : ''}${s.monthlyMI > 0 ? ` + MI: ${money(s.monthlyMI)}` : ''} + Escrow: ${money(clientProfile.escrow || 0)}</div>
       </div>
       <div class="kpi-cell" style="background:rgba(22,163,74,0.15)">
         <div class="kpi-label">Monthly Savings</div>
@@ -585,7 +587,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
           <div className="grid grid-cols-2 sm:grid-cols-4 border-t border-blue-800">
             {[
               ['PAYING NOW', money(currentTotalPayment) + '/mo', 'All current obligations', false],
-              ['AFTER REFINANCE', money(s.newPI + parseFloat(clientProfile.escrow || 0)) + '/mo', `P&I: ${money(s.newPI)} + Escrow: ${money(clientProfile.escrow || 0)}`, false],
+              ['AFTER REFINANCE', money(s.newPI + (s.monthlyInsurance || 0) + parseFloat(clientProfile.escrow || 0)) + '/mo', `P&I: ${money(s.newPI)}${s.monthlyMIP > 0 ? ` + MIP: ${money(s.monthlyMIP)}` : ''}${s.monthlyMI > 0 ? ` + MI: ${money(s.monthlyMI)}` : ''} + Escrow: ${money(clientProfile.escrow || 0)}`, false],
               ['MONTHLY SAVINGS', (s.monthlySavings > 0 ? '+' : '') + money(s.monthlySavings) + '/mo', `${money(s.monthlySavings * 12)}/yr · ${money(s.monthlySavings * 60)} over 5 yrs`, true],
               ...(s.cashOut > 0 ? [['CASH OUT TO CLIENT', '~' + money(netCashOut), 'Net after closing costs', true]] : []),
             ].map(([label, val, sub, green], i) => (
@@ -628,6 +630,8 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
               ['Title & Settlement Charges', s.titleCharges || parseFloat(clientProfile.titleCharges) || 0, null],
               ...((s.lenderFees || lenderFees) > 0 ? [['Lender Fees (Processing + Underwriting)', s.lenderFees || lenderFees, null]] : []),
               ...(s.cashOut > 0 ? [['Cash-Out Amount', s.cashOut, null]] : []),
+              ...(s.ufmip > 0 ? [['FHA Upfront MIP (1.75%, financed)', s.ufmip, 'amber']] : []),
+              ...(s.fundingFee > 0 ? [[`VA Funding Fee (${(s.fundingFeeRate * 100).toFixed(2)}%, financed)`, s.fundingFee, 'amber']] : []),
               ...(s.borrowerPaysPct > 0 ? [[`Discount Points (${s.borrowerPaysPct?.toFixed(3)}% of loan)`, s.pointsCost, 'amber']] : []),
               ...(s.lenderCreditPct > 0 ? [[`Lender Credit (${s.lenderCreditPct?.toFixed(3)}% of loan)`, -s.lenderCredit, 'green']] : []),
             ].filter(([, v]) => v !== 0 && v != null).map(([label, val, color], i) => (
@@ -643,6 +647,18 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
               <span className="font-black text-blue-700 text-base">{money(s.newLoanAmount)}</span>
             </div>
             <div className="mt-2 space-y-1 text-xs border-t border-gray-100 pt-2">
+              {s.monthlyMIP > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Monthly MIP ({(s.mipAnnualRate * 100).toFixed(2)}% annual)</span>
+                  <span className="font-bold text-gray-800">+{money(s.monthlyMIP)}/mo</span>
+                </div>
+              )}
+              {s.monthlyMI > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Monthly MI (estimate)</span>
+                  <span className="font-bold text-gray-800">+{money(s.monthlyMI)}/mo</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-gray-500">Net Closing Costs</span>
                 <span className={`font-bold ${s.netClosingCosts <= 0 ? 'text-green-600' : 'text-gray-800'}`}>{s.netClosingCosts <= 0 ? '-' : ''}{money(Math.abs(s.netClosingCosts))}</span>
