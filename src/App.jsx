@@ -11,6 +11,13 @@ import { calcPI, reverseEngineerTerm } from './utils/mortgageCalc';
 
 const STEPS = ['Upload', 'Client Profile', 'Debts', 'Goals & Programs', 'Analysis'];
 
+// Cash-out LTV ceiling by route. Veterans go VA (90%); everyone else is Conv/FHA (80%).
+// Used to hard-block checking debts that would push the new loan past the product max.
+export function cashOutLtvCap(isVeteran) {
+  return isVeteran === true ? 90 : 80;
+}
+
+
 function StepIndicator({ current }) {
   return (
     <div className="flex items-center gap-0 mb-8">
@@ -88,6 +95,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
   const [maxPointsPct, setMaxPointsPct] = useState('5');
 
   const [isVeteran, setIsVeteran] = useState(null);
+  const [ltvBlock, setLtvBlock] = useState(null);   // {ltv, cap, programs} when a debt toggle is blocked
   const [yearsInHome, setYearsInHome] = useState('');
   const [propertyLookupStatus, setPropertyLookupStatus] = useState('idle'); // idle | loading | found | notfound
   const [debts, setDebts] = useState([]);
@@ -313,7 +321,29 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     }
   };
 
-  const handleToggleDebt = (index) => setDebts(prev => prev.map((d, i) => i === index ? { ...d, selected: !d.selected } : d));
+  const handleToggleDebt = (index) => setDebts(prev => {
+    const target = prev[index];
+    const turningOn = target && !target.selected;
+    if (turningOn) {
+      // Hard block: would adding this debt push the new loan past the cash-out LTV cap?
+      const selectedAfter = prev.filter((d, i) => (i === index || d.selected) && !d.isMortgage);
+      const debtTotal = selectedAfter.reduce((s, d) => s + (parseFloat(d.balance) || 0), 0);
+      const newLoan = (parseFloat(profile.currentBalance) || 0) + debtTotal
+        + (parseFloat(profile.cashOutAmount) || 0)
+        + (parseFloat(profile.titleCharges) || 0)
+        + (parseFloat(profile.lenderFees) || 0);
+      const value = parseFloat(profile.estimatedValue) || 0;
+      const cap = cashOutLtvCap(isVeteran);
+      if (value > 0) {
+        const ltv = Math.round((newLoan / value) * 1000) / 10;
+        if (ltv > cap + 1e-9) {
+          setLtvBlock({ ltv, cap, isVeteran, debtName: target.name });
+          return prev; // don't toggle on
+        }
+      }
+    }
+    return prev.map((d, i) => i === index ? { ...d, selected: !d.selected } : d);
+  });
   const handleAddDebt = (debt) => setDebts(prev => [...prev, { ...debt, selected: true, analysis: analyzeDebt(debt, parseFloat(profile.manualRate) || 6.5) }]);
   // Select all debts the optimizer flags as 'recommended' (high relief ratio, efficient to consolidate)
   const handleSelectRecommended = () => setDebts(prev => prev.map(d =>
@@ -1012,6 +1042,37 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
           )}
         </div>
       </main>
+
+      {/* ─── Cash-out LTV cap block ─── */}
+      {ltvBlock && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setLtvBlock(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-amber-500 px-5 py-3 flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-white" />
+              <h2 className="font-bold text-white">Cash-Out LTV Limit Reached</h2>
+            </div>
+            <div className="p-5 text-sm text-gray-700 space-y-3">
+              <p>
+                Adding <span className="font-semibold">{ltvBlock.debtName || 'this debt'}</span> would bring the new loan to about{' '}
+                <span className="font-bold text-amber-700">{ltvBlock.ltv}% LTV</span>, above the{' '}
+                <span className="font-bold">{ltvBlock.cap}%</span> cash-out maximum for{' '}
+                {ltvBlock.isVeteran ? 'VA' : 'Conventional and FHA'} loans.
+              </p>
+              <p className="text-gray-500">
+                {ltvBlock.isVeteran
+                  ? 'VA cash-out is capped at 90% LTV on this rate sheet.'
+                  : 'Conventional and FHA cash-out are capped at 80% LTV. (A veteran borrower could go to 90% via VA.)'}
+                {' '}To include this debt, reduce the cash-out amount, uncheck another debt, or confirm a higher appraised value.
+              </p>
+            </div>
+            <div className="px-5 py-3 bg-gray-50 flex justify-end">
+              <button onClick={() => setLtvBlock(null)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── My Files modal ─── */}
       {showFiles && (
