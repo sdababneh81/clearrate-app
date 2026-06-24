@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase, getActiveRateSheet, saveRateSheet, getRateSheetHistory, setActiveRateSheet, getAllProfiles, updateUserRole, updateUserActive, getMarginSettings, saveMarginSettings } from '../lib/supabase.js';
-import { parseRateSheet } from '../utils/claudeParser.js';
+import { parseRateSheet, parseRateSheetBase } from '../utils/claudeParser.js';
 
 export default function AdminPortal({ user, profile, onExit }) {
   const [tab, setTab] = useState('ratesheet'); // 'ratesheet' | 'users' | 'invite' | 'api'
@@ -71,16 +71,12 @@ export default function AdminPortal({ user, profile, onExit }) {
       const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
       if (!apiKey) throw new Error('Missing VITE_ANTHROPIC_API_KEY — check Vercel environment variables');
 
-      // Parse the PDF using Claude
-      const parsed = await parseRateSheet(file, { 
-        ficoScore: 700, 
-        loanType: 'Conventional', 
-        purpose: 'rate/term refi',
-        ltv: 75
-      });
-      
+      // Parse base prices + the raw LLPA grid — NO borrower baked in.
+      // The grid is applied per real borrower at analysis time, in the engine.
+      const parsed = await parseRateSheetBase(file);
+
       console.log('[Admin] Parsed:', parsed);
-      
+
       if (!parsed?.programs?.length) {
         throw new Error('No programs found in rate sheet. Check browser console for Claude response details.');
       }
@@ -89,12 +85,16 @@ export default function AdminPortal({ user, profile, onExit }) {
       await saveRateSheet(
         parsed.programs,
         parsed.effectiveDate || new Date().toLocaleDateString(),
-        parsed.llpasApplied || [],
+        [],                  // llpas_applied is now per-borrower at analysis time
         file.name,
-        user.id
+        user.id,
+        parsed.llpaGrid || null
       );
       setUploadStatus('done');
-      setMessage(`✅ Rate sheet uploaded: ${parsed.programs.length} programs (${parsed.programs.map(p => p.type).join(', ')}), effective ${parsed.effectiveDate || 'today'}`);
+      const gridNote = parsed.llpaGrid
+        ? ` · LLPA grid extracted (${Object.keys(parsed.llpaGrid).join(', ')})`
+        : ' · ⚠️ no LLPA grid found in this PDF';
+      setMessage(`✅ Rate sheet uploaded: ${parsed.programs.length} programs (${parsed.programs.map(p => p.type).join(', ')}), effective ${parsed.effectiveDate || 'today'}${gridNote}`);
       await loadData();
     } catch (e) {
       console.error('[Admin] Upload error:', e);
