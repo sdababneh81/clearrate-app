@@ -106,6 +106,8 @@ export async function parseRateSheetBase(file) {
 `Extract the BASE RATE TABLES from this UWM rate sheet. Return ONLY valid JSON, no markdown.
 
 Focus on these standard refinance products (IGNORE Jumbo, Non-QM, HELOC, DPA, Home Sweet Texas, Doctor, Bank Statement, DSCR/Investor Flex):
+
+FIXED RATE:
 - CONF CONV 21-30 YEAR  → type "Conventional", term 30
 - CONF CONV 11-15 YEAR  → type "Conventional", term 15
 - HIGH BALANCE 21-30 YEAR → type "Conventional High Balance", term 30
@@ -117,18 +119,32 @@ Focus on these standard refinance products (IGNORE Jumbo, Non-QM, HELOC, DPA, Ho
 - ELITE VA FIXED RATE 16-30 YEAR → type "VA Elite", term 30
 - ELITE FHA FIXED RATE 16-30 YEAR → type "FHA Elite", term 30
 
+ARM (set isARM:true and armType to the ARM name):
+- ELITE 5/6 SOFR ARM → type "Conventional Elite", armType "5/6 ARM", term 30
+- ELITE 7/6 SOFR ARM → type "Conventional Elite", armType "7/6 ARM", term 30
+- ELITE 10/6 SOFR ARM → type "Conventional Elite", armType "10/6 ARM", term 30
+- 5/6 SOFR ARM (standard) → type "Conventional", armType "5/6 ARM", term 30
+- 7/6 SOFR ARM (standard) → type "Conventional", armType "7/6 ARM", term 30
+- 10/6 SOFR ARM (standard) → type "Conventional", armType "10/6 ARM", term 30
+- VA 5/1 ARMs → type "VA", armType "5/1 ARM", term 30
+- VA 3/1 ARMs → type "VA", armType "3/1 ARM", term 30
+- FHA 5/1 ARMs → type "FHA", armType "5/1 ARM", term 30
+- FHA 3/1 ARMs → type "FHA", armType "3/1 ARM", term 30
+
 Use the 30 DAY price column for basePoints.
 
 {
   "effectiveDate": "string",
   "programs": [
     { "type": "Conventional", "isARM": false, "armType": null, "term": 30,
-      "rates": [ { "rate": 6.500, "basePoints": -0.722 } ] }
+      "rates": [ { "rate": 6.500, "basePoints": -0.722 } ] },
+    { "type": "Conventional", "isARM": true, "armType": "5/6 ARM", "term": 30,
+      "rates": [ { "rate": 6.500, "basePoints": 0.699 } ] }
   ]
 }
 
-Rules: basePoints = the 30 DAY price (negative = credit to borrower, positive = cost). Include EVERY rate row in each table. Do NOT invent rows.`,
-    12000);
+Rules: basePoints = the 30 DAY price (negative = credit to borrower, positive = cost). Include EVERY rate row in each table. Set isARM:true ONLY for the ARM products above. Do NOT invent rows.`,
+    16000);
   if (!prog.obj) {
     throw new Error((prog.stop === 'max_tokens' ? 'Base-rate response was cut off. ' : 'Could not parse base rates. ') + 'Raw: ' + prog.raw.substring(0, 400));
   }
