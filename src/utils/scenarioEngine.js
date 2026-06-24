@@ -230,9 +230,10 @@ export function generateScenarios({
           rate: selected.adjustedRate,
           netPoints: selected.netPoints,
           basePoints: selected.basePoints ?? selected.netPoints,
-          // Itemized, borrower-specific hits from the grid (admin-only display).
-          // Fall back to any pre-baked borrowerLLPAs on legacy sheets.
-          llpaHits: (grid && llpa.hits?.length) ? llpa.hits : (rateSheet?.borrowerLLPAs || null),
+          // Itemized borrower-specific hits. When a grid ran we ALWAYS attach the
+          // array (even empty) so the report can show "LLPAs applied: none for this
+          // profile" rather than rendering nothing. Legacy sheets (no grid) → null.
+          llpaHits: grid ? (llpa.hits || []) : (rateSheet?.borrowerLLPAs || null),
           program: program.type,
           goal, loanAmount: baseLoanAmount, termYears: term,
           clientProfile: { ...clientProfile, cashOutAmount: cashOut },
