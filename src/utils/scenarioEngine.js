@@ -55,11 +55,14 @@ function buildScenario({
   rate, netPoints, basePoints = null, llpaHits = null, program, goal, loanAmount, termYears,
   clientProfile, selectedDebts, marginBPS, marginDollar,
   yearsInHome, isARM = false, armType = null,
+  loanType = 'conventional', isVeteran = false, fundingFeeExempt = false,
+  convMI = 0, convMIType = 'percent',
   strategyTag = null, strategyLabel = null, efficiencyTag = null, efficiencyLabel = null,
 }) {
   const {
     currentBalance, currentRate, currentTermRemaining,
     escrow = 0, titleCharges = 0, lenderFees = 0, cashOutAmount = 0,
+    estimatedValue = 0,
   } = clientProfile;
 
   const marginPct = (marginBPS || 0) / 100;
@@ -75,11 +78,50 @@ function buildScenario({
   const debtPaymentTotal = selectedDebts.filter(d => d.selected).reduce((s, d) => s + (parseFloat(d.payment) || 0), 0);
 
   const netClosingCosts = Math.round(titleCharges + lenderFees + pointsCost - lenderCredit);
-  const newLoanAmount = Math.round(currentBalance + debtBalanceTotal + titleCharges + lenderFees + (cashOutAmount || 0) + pointsCost - lenderCredit);
+  // Base loan BEFORE any government upfront fee is financed.
+  const baseLoan = Math.round(currentBalance + debtBalanceTotal + titleCharges + lenderFees + (cashOutAmount || 0) + pointsCost - lenderCredit);
+
+  const propVal = parseFloat(estimatedValue) || 0;
+  const baseLtv = propVal > 0 ? (baseLoan / propVal) * 100 : 0;
+
+  // ── Government mortgage insurance / funding fee ─────────────────────────────
+  let ufmip = 0;          // FHA upfront MIP (financed into loan)
+  let monthlyMIP = 0;     // FHA monthly MIP (added to payment)
+  let mipAnnualRate = 0;  // FHA annual MIP rate used (for display)
+  let fundingFee = 0;     // VA funding fee (financed into loan)
+  let fundingFeeRate = 0; // VA funding fee rate used (for display)
+  let monthlyMI = 0;      // Conventional monthly MI estimate (added to payment)
+
+  if (loanType === 'fha') {
+    ufmip = Math.round(0.0175 * baseLoan); // 1.75% UFMIP
+    // Annual MIP rate by term + LTV (post-Mar-2023 schedule)
+    if (termYears <= 15) {
+      mipAnnualRate = baseLtv > 90 ? 0.0040 : 0.0015;
+    } else {
+      mipAnnualRate = baseLtv > 95 ? 0.0055 : 0.0050;
+    }
+    monthlyMIP = Math.round((mipAnnualRate * baseLoan) / 12);
+  } else if (loanType === 'va') {
+    fundingFeeRate = fundingFeeExempt ? 0 : (goal === 'cash_out' ? 0.0215 : 0.005);
+    fundingFee = Math.round(fundingFeeRate * baseLoan);
+    // VA has NO monthly mortgage insurance.
+  } else {
+    // Conventional: LO-entered monthly MI estimate. Percent is an annual rate
+    // (e.g. 0.22% = 22bps) → monthly = rate% × loan / 12. Dollar is a flat monthly.
+    const mi = parseFloat(convMI) || 0;
+    if (mi > 0) {
+      monthlyMI = convMIType === 'dollar' ? Math.round(mi) : Math.round((mi / 100 * baseLoan) / 12);
+    }
+  }
+
+  // Financed upfront fee raises the amortizing loan amount.
+  const newLoanAmount = baseLoan + ufmip + fundingFee;
 
   const newPI = calcPI(newLoanAmount, rate, termYears);
   const oldPI = calcPI(currentBalance, currentRate, currentTermRemaining);
-  const monthlySavings = Math.round((oldPI + parseFloat(debtPaymentTotal) + (parseFloat(escrow) || 0)) - (newPI + (parseFloat(escrow) || 0)));
+  // After-refi monthly carrying cost includes any monthly MI/MIP.
+  const monthlyInsurance = monthlyMIP + monthlyMI;
+  const monthlySavings = Math.round((oldPI + parseFloat(debtPaymentTotal) + (parseFloat(escrow) || 0)) - (newPI + monthlyInsurance + (parseFloat(escrow) || 0)));
   const lifetimeInterestSavings = Math.round((oldPI * (currentTermRemaining * 12)) - (newPI * (termYears * 12)));
   const breakevenMonths = calcBreakeven(netClosingCosts, monthlySavings);
 
@@ -87,9 +129,12 @@ function buildScenario({
 
   return {
     rate, netPoints, basePoints: basePoints ?? netPoints, llpaHits: llpaHits || null, program, goal, loanAmount: newLoanAmount, termYears, isARM, armType,
+    loanType,
     lenderCreditPct, borrowerPaysPct, lenderCredit, pointsCost,
     debtBalanceTotal, debtPaymentTotal,
     titleCharges, lenderFees,
+    // Government / MI fields (0 when not applicable)
+    baseLoan, ufmip, monthlyMIP, mipAnnualRate, fundingFee, fundingFeeRate, monthlyMI, monthlyInsurance,
     netClosingCosts, newLoanAmount, newPI, oldPI,
     currentBalance, cashOut: cashOutAmount || 0,
     monthlySavings, lifetimeInterestSavings, breakevenMonths, score,
@@ -108,6 +153,7 @@ export function generateScenarios({
   marginsByType = null,
   yearsInHome, maxPointsPct = 5.0,
   pricingStrategies = ['lowest_rate', 'margin_cost', 'no_cost', 'low_cost'],
+  fundingFeeExempt = false, convMI = 0, convMIType = 'percent',
   runRef = null,
 }) {
   const {
@@ -252,6 +298,7 @@ export function generateScenarios({
           goal, loanAmount: baseLoanAmount, termYears: term,
           clientProfile: { ...clientProfile, cashOutAmount: cashOut },
           selectedDebts, marginBPS: progMargin, marginDollar, yearsInHome,
+          loanType, isVeteran, fundingFeeExempt, convMI, convMIType,
           strategyTag: strategy,
           strategyLabel: STRATEGY_LABELS[strategy],
           efficiencyTag: selected.tag,
