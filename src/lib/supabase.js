@@ -55,7 +55,7 @@ export async function getActiveRateSheet() {
   return data || null
 }
 
-export async function saveRateSheet(programs, effectiveDate, llpasApplied, filename, userId) {
+export async function saveRateSheet(programs, effectiveDate, llpasApplied, filename, userId, llpaGrid = null) {
   await supabase.from('rate_sheets').update({ is_active: false }).eq('is_active', true)
   const { data, error } = await supabase
     .from('rate_sheets')
@@ -63,6 +63,7 @@ export async function saveRateSheet(programs, effectiveDate, llpasApplied, filen
       programs,
       effective_date: effectiveDate,
       llpas_applied: llpasApplied || [],
+      llpa_grid: llpaGrid,
       raw_filename: filename,
       uploaded_by: userId,
       is_active: true,
