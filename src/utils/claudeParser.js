@@ -66,9 +66,105 @@ Rules: only open tradelines balance>0 payment>0, skip mortgage (put in mortgage 
 }
 
 /**
- * Parse rate sheet PDF in two calls:
- * Call 1: Extract raw base prices (no LLPA) + the full LLPA adjustment grid
- * Call 2: Apply the right LLPA hits for this borrower and build final prices
+ * Parse a rate sheet into BASE prices + the raw LLPA grid — with NO borrower
+ * baked in. This is what Admin upload should use: the grid is applied per real
+ * borrower at analysis time (deterministically, in the engine), not frozen here.
+ *
+ * Returns: { effectiveDate, programs:[{type,isARM,armType,term,rates:[{rate,basePoints}]}], llpaGrid }
+ */
+export async function parseRateSheetBase(file) {
+  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('Missing VITE_ANTHROPIC_API_KEY');
+
+  let pdfContent = null;
+  if (file.type === 'application/pdf') {
+    const base64 = await fileToBase64(file);
+    pdfContent = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } };
+  }
+
+  const content = pdfContent
+    ? [
+        pdfContent,
+        {
+          type: 'text',
+          text: `Extract two things from this UWM rate sheet PDF:
+
+1. BASE RATE PRICES — the raw 30-day lock prices BEFORE any LLPA adjustments, for every program and every rate.
+2. LLPA ADJUSTMENT GRID — all the pricing-hit tables (credit score x LTV, cash-out by LTV, loan type, occupancy, units, etc.).
+
+Return ONLY valid JSON, no markdown, no explanation:
+
+{
+  "effectiveDate": "string or empty",
+  "programs": [
+    { "type": "VA|Conventional|FHA", "isARM": false, "armType": null, "term": 30,
+      "rates": [ { "rate": 6.500, "basePoints": -0.250 } ] }
+  ],
+  "llpaGrid": {
+    "creditScore": [
+      { "min": 740, "max": 759, "adjustments": { "ltv_60": 0.000, "ltv_65": 0.000, "ltv_70": 0.250, "ltv_75": 0.250, "ltv_80": 0.500, "ltv_85": 0.500, "ltv_90": 0.750, "ltv_95": 0.750, "ltv_97": 0.750 } }
+    ],
+    "cashOut": [
+      { "ltv_min": 0, "ltv_max": 60, "hit": 0.000 },
+      { "ltv_min": 60.01, "ltv_max": 70, "hit": 0.500 },
+      { "ltv_min": 70.01, "ltv_max": 80, "hit": 1.500 }
+    ],
+    "otherHits": [
+      { "description": "Investment Property", "hit": 1.750, "when": "investment" },
+      { "description": "2-unit property", "hit": 1.000, "when": "units2" }
+    ]
+  }
+}
+
+Rules:
+- basePoints: raw price from the rate table, negative = credit, positive = cost. Include EVERY rate.
+- For VA, FHA, and Conventional, list each as its own program. Include ARM programs with isARM:true and armType (e.g. "5/6 ARM").
+- Extract every LLPA table you can find. The creditScore "adjustments" keys must be ltv_60, ltv_65, ltv_70, ltv_75, ltv_80, ltv_85, ltv_90, ltv_95, ltv_97 (use the column that matches each LTV bracket; omit a key if that bracket isn't on the sheet).
+- For otherHits, set "when" to a short flag the app can match: investment, units2, units3, units4, secondHome, manufactured, condo.
+- If a table doesn't exist in the PDF, omit that key. Do NOT invent values.`
+        }
+      ]
+    : [{ type: 'text', text: `Extract base rates and LLPA grid from this rate sheet. Return JSON {effectiveDate, programs:[{type,isARM,armType,term,rates:[{rate,basePoints}]}], llpaGrid:{creditScore:[{min,max,adjustments}],cashOut:[{ltv_min,ltv_max,hit}],otherHits:[{description,hit,when}]}}. ${(await file.text()).substring(0, 15000)}` }];
+
+  const r = await fetch(CLAUDE_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 8000, messages: [{ role: 'user', content }] })
+  });
+
+  if (!r.ok) throw new Error(`Rate sheet API error ${r.status}: ${(await r.text()).substring(0, 200)}`);
+  const d = await r.json();
+  const raw = d.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
+
+  let extracted;
+  try { extracted = JSON.parse(raw); }
+  catch (e) { throw new Error('Could not parse rate sheet. Raw: ' + raw.substring(0, 400)); }
+
+  // Normalize: rates carry basePoints; netPoints defaults to basePoints until the
+  // engine applies the borrower's LLPA hits at analysis time.
+  const programs = (extracted.programs || []).map(p => ({
+    type: p.type,
+    isARM: !!p.isARM,
+    armType: p.armType || null,
+    term: p.term || 30,
+    rates: (p.rates || []).map(rt => ({
+      rate: parseFloat(rt.rate),
+      basePoints: parseFloat(rt.basePoints),
+      netPoints: parseFloat(rt.basePoints), // pre-LLPA placeholder
+    })).filter(rt => !isNaN(rt.rate) && !isNaN(rt.basePoints)),
+  })).filter(p => p.rates.length > 0);
+
+  return {
+    effectiveDate: extracted.effectiveDate || '',
+    programs,
+    llpaGrid: extracted.llpaGrid || null,
+  };
+}
+
+
+/**
+ * LEGACY two-call parser (kept for backward compatibility / fallback). Bakes LLPAs
+ * for a supplied borrower. New uploads use parseRateSheetBase + the engine instead.
  */
 export async function parseRateSheet(file, clientProfile, adminMargins = {}) {
   const { ficoScore, ltv, loanType, purpose, currentRate, estimatedValue, currentBalance, cashOutAmount } = clientProfile || {};
