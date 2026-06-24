@@ -138,10 +138,13 @@ export function selectRateForStrategy(analyzedRates, strategy, newLoanAmount, ti
   const cap = Number.isFinite(capRaw) && capRaw > 0 ? capRaw : 5.0;
   const CAP_EPS = 0.001;
 
-  // Borrower discount points = positive lender net price. Margin is separate YSP.
-  const discountPoints = (r) => Math.max(0, r.netPoints);
+  // Points the BORROWER actually pays = lender net price + broker margin, floored at 0.
+  // This is the number shown on screen, so the cap must measure THIS (margin included),
+  // not the lender-only discount points — otherwise a large margin sneaks the borrower
+  // past the cap (e.g. 3.48% lender + 3% margin = 6.48% to a borrower under a "5%" cap).
+  const discountPoints = (r) => Math.max(0, r.netPoints + marginPct);
 
-  // Cap is on DISCOUNT POINTS + SETTLEMENT FEES (per Sam). Margin excluded.
+  // Cap is on BORROWER-PAID POINTS + SETTLEMENT FEES.
   const totalBorrowerPointCost = (r) => discountPoints(r) + settlementPct;
   const withinCap = (r) => totalBorrowerPointCost(r) <= cap + CAP_EPS;
 
