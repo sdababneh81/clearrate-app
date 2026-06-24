@@ -137,7 +137,8 @@ function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStr
   <meta charset="utf-8"/>
   <title>ClearRate — Refinance Analysis</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    html { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; font-size: 12px; color: #1a1a2e; background: #f8fafc; }
     .page { max-width: 860px; margin: 0 auto; padding: 24px; }
 
@@ -223,11 +224,12 @@ function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStr
     .disclaimer { font-size: 9px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 10px; margin-top: 14px; text-align: center; line-height: 1.6; }
 
     @media print {
-      body { background: white; }
+      body { background: white; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
       .page { padding: 12px; }
       .hero { border-radius: 8px; }
       .card { break-inside: avoid; }
       .lo-box { break-inside: avoid; }
+      @page { margin: 0.4in; }
     }
   </style>
 </head>
