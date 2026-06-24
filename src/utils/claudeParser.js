@@ -66,9 +66,11 @@ Rules: only open tradelines balance>0 payment>0, skip mortgage (put in mortgage 
 }
 
 /**
- * Parse a rate sheet into BASE prices + the raw LLPA grid — with NO borrower
- * baked in. This is what Admin upload should use: the grid is applied per real
- * borrower at analysis time (deterministically, in the engine), not frozen here.
+ * Parse a rate sheet into BASE prices + the raw LLPA grid — NO borrower baked in.
+ * Two focused Claude calls so neither truncates on UWM's large multi-page sheet:
+ *   Call 1 — base rate tables (Conventional / VA / FHA fixed, the refi-relevant ones).
+ *   Call 2 — the LLPA grids in UWM's real shape (Conventional FICO×LTV matrices by
+ *            purpose; Government flat FICO adjustor + VA cash-out special).
  *
  * Returns: { effectiveDate, programs:[{type,isARM,armType,term,rates:[{rate,basePoints}]}], llpaGrid }
  */
@@ -81,94 +83,108 @@ export async function parseRateSheetBase(file) {
     const base64 = await fileToBase64(file);
     pdfContent = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } };
   }
+  const fileText = pdfContent ? null : (await file.text()).substring(0, 18000);
 
-  const content = pdfContent
-    ? [
-        pdfContent,
-        {
-          type: 'text',
-          text: `Extract two things from this UWM rate sheet PDF:
+  const callClaude = async (promptText, maxTokens) => {
+    const content = pdfContent
+      ? [pdfContent, { type: 'text', text: promptText }]
+      : [{ type: 'text', text: promptText + '\n\n' + fileText }];
+    const resp = await fetch(CLAUDE_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: maxTokens, messages: [{ role: 'user', content }] })
+    });
+    if (!resp.ok) throw new Error(`Rate sheet API error ${resp.status}: ${(await resp.text()).substring(0, 200)}`);
+    const d = await resp.json();
+    const raw = d.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
+    return { obj: parseJsonLoose(raw), stop: d.stop_reason, raw };
+  };
 
-1. BASE RATE PRICES — the raw 30-day lock prices BEFORE any LLPA adjustments, for every program and every rate.
-2. LLPA ADJUSTMENT GRID — all the pricing-hit tables (credit score x LTV, cash-out by LTV, loan type, occupancy, units, etc.).
+  // ── CALL 1: base rate tables (programs only) ──────────────────────────────
+  console.log('[Parser] Call 1: base rate tables…');
+  const prog = await callClaude(
+`Extract the BASE RATE TABLES from this UWM rate sheet. Return ONLY valid JSON, no markdown.
 
-Return ONLY valid JSON, no markdown, no explanation. Put llpaGrid FIRST (before programs):
+Focus on these standard refinance products (IGNORE Jumbo, Non-QM, HELOC, DPA, Home Sweet Texas, Doctor, Bank Statement, DSCR/Investor Flex):
+- CONF CONV 21-30 YEAR  → type "Conventional", term 30
+- CONF CONV 11-15 YEAR  → type "Conventional", term 15
+- HIGH BALANCE 21-30 YEAR → type "Conventional High Balance", term 30
+- VA FIXED RATE 16-30 YEAR → type "VA", term 30   (the standard one, NOT "ELITE", NOT "Jumbo")
+- VA FIXED RATE 8-15 YEAR  → type "VA", term 15
+- FHA FIXED RATE 16-30 YEAR → type "FHA", term 30
+- FHA FIXED RATE 8-15 YEAR  → type "FHA", term 15
+- ELITE 21-30 YEAR → type "Conventional Elite", term 30 (700+ FICO, ≤80% LTV, ≥$125K)
+- ELITE VA FIXED RATE 16-30 YEAR → type "VA Elite", term 30
+- ELITE FHA FIXED RATE 16-30 YEAR → type "FHA Elite", term 30
+
+Use the 30 DAY price column for basePoints.
 
 {
-  "effectiveDate": "string or empty",
-  "llpaGrid": {
-    "creditScore": [
-      { "min": 740, "max": 759, "adjustments": { "ltv_60": 0.000, "ltv_65": 0.000, "ltv_70": 0.250, "ltv_75": 0.250, "ltv_80": 0.500, "ltv_85": 0.500, "ltv_90": 0.750, "ltv_95": 0.750, "ltv_97": 0.750 } }
-    ],
-    "cashOut": [
-      { "ltv_min": 0, "ltv_max": 60, "hit": 0.000 },
-      { "ltv_min": 60.01, "ltv_max": 70, "hit": 0.500 },
-      { "ltv_min": 70.01, "ltv_max": 80, "hit": 1.500 }
-    ],
-    "otherHits": [
-      { "description": "Investment Property", "hit": 1.750, "when": "investment" },
-      { "description": "2-unit property", "hit": 1.000, "when": "units2" }
-    ]
-  },
+  "effectiveDate": "string",
   "programs": [
-    { "type": "VA|Conventional|FHA", "isARM": false, "armType": null, "term": 30,
-      "rates": [ { "rate": 6.500, "basePoints": -0.250 } ] }
+    { "type": "Conventional", "isARM": false, "armType": null, "term": 30,
+      "rates": [ { "rate": 6.500, "basePoints": -0.722 } ] }
   ]
 }
 
-Rules:
-- basePoints: raw price from the rate table, negative = credit, positive = cost. Include EVERY rate.
-- For VA, FHA, and Conventional, list each as its own program. Include ARM programs with isARM:true and armType (e.g. "5/6 ARM").
-- Extract every LLPA table you can find. The creditScore "adjustments" keys must be ltv_60, ltv_65, ltv_70, ltv_75, ltv_80, ltv_85, ltv_90, ltv_95, ltv_97 (use the column that matches each LTV bracket; omit a key if that bracket isn't on the sheet).
-- For otherHits, set "when" to a short flag the app can match: investment, units2, units3, units4, secondHome, manufactured, condo.
-- If a table doesn't exist in the PDF, omit that key. Do NOT invent values.`
-        }
-      ]
-    : [{ type: 'text', text: `Extract base rates and LLPA grid from this rate sheet. Return JSON {effectiveDate, programs:[{type,isARM,armType,term,rates:[{rate,basePoints}]}], llpaGrid:{creditScore:[{min,max,adjustments}],cashOut:[{ltv_min,ltv_max,hit}],otherHits:[{description,hit,when}]}}. ${(await file.text()).substring(0, 15000)}` }];
-
-  const r = await fetch(CLAUDE_API, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 16000, messages: [{ role: 'user', content }] })
-  });
-
-  if (!r.ok) throw new Error(`Rate sheet API error ${r.status}: ${(await r.text()).substring(0, 200)}`);
-  const d = await r.json();
-  const stopReason = d.stop_reason;
-  const raw = d.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
-
-  const extracted = parseJsonLoose(raw);
-  if (!extracted) {
-    throw new Error(
-      (stopReason === 'max_tokens'
-        ? 'Rate sheet response was cut off (too large to parse even after repair). '
-        : 'Could not parse rate sheet. ') + 'Raw: ' + raw.substring(0, 400)
-    );
-  }
-  if (stopReason === 'max_tokens') {
-    console.warn('[Parser] Response hit max_tokens; salvaged via JSON repair. Some trailing rates may be missing.');
+Rules: basePoints = the 30 DAY price (negative = credit to borrower, positive = cost). Include EVERY rate row in each table. Do NOT invent rows.`,
+    12000);
+  if (!prog.obj) {
+    throw new Error((prog.stop === 'max_tokens' ? 'Base-rate response was cut off. ' : 'Could not parse base rates. ') + 'Raw: ' + prog.raw.substring(0, 400));
   }
 
-  // Normalize: rates carry basePoints; netPoints defaults to basePoints until the
-  // engine applies the borrower's LLPA hits at analysis time.
-  const programs = (extracted.programs || []).map(p => ({
+  // ── CALL 2: LLPA grids (UWM real structure) ───────────────────────────────
+  console.log('[Parser] Call 2: LLPA grids…');
+  const grid = await callClaude(
+`Extract ONLY the LLPA / pricing-adjustment grids from this UWM rate sheet. Return ONLY valid JSON, no markdown.
+
+UWM has two systems:
+
+A) CONVENTIONAL — full FICO × LTV matrices on the "CONVENTIONAL PRICING ADJUSTMENTS" page. There are separate matrices for Rate/Term Refinance and Cash/Out Refinance. Each row is a FICO band (780+, 760-779, 740-759, 720-739, 700-719, 680-699, 660-679, 640-659, 620-639). Each column is an LTV bracket.
+- Rate/Term columns (10): <=30, 30.01-60, 60.01-65, 65.01-70, 70.01-75, 75.01-80, 80.01-85, 85.01-90, 90.01-95, 95.01-97
+- Cash-Out columns (8): <=30, 30.01-60, 60.01-65, 65.01-70, 70.01-75, 75.01-80, 80.01-85, 85.01-89.99
+- Put each row's values in a "cols" array IN COLUMN ORDER. Use the string "NA" for not-available cells.
+
+B) GOVERNMENT (VA/FHA) — on the "GOVERNMENT PRICE ADJUSTMENTS" page there is a flat "Credit Score Adjustors" table by FICO only (e.g. 740+ = -0.500, 700-739 = -0.250, 620-639 = 0.375, 600-619 = 0.625, 580-599 = 1.000). Also capture "VA Cash-Out LTV > 90%" (e.g. 1.250).
+
+Return exactly:
+{
+  "conventional": {
+    "ltvBands":        [30,60,65,70,75,80,85,90,95,97],
+    "cashOutLtvBands": [30,60,65,70,75,80,85,89.99],
+    "rateTerm": [ { "min":780, "max":850, "cols":[0,0,0,0,0.125,0.5,0.625,0.5,0.375,0.375] } ],
+    "cashOut":  [ { "min":780, "max":850, "cols":[0.375,0.375,0.625,0.625,0.875,1.375,1.625,1.875] } ]
+  },
+  "government": {
+    "fico": [ {"min":740,"max":850,"hit":-0.5}, {"min":700,"max":739,"hit":-0.25}, {"min":640,"max":699,"hit":0}, {"min":620,"max":639,"hit":0.375}, {"min":600,"max":619,"hit":0.625}, {"min":580,"max":599,"hit":1.0} ],
+    "vaCashOutOver90": 1.25
+  }
+}
+
+Rules: transcribe values EXACTLY as printed. "cols" length must match the band count (10 for rateTerm, 8 for cashOut). Use "NA" (string) for blank/NA cells. Do NOT invent values; if a matrix is missing, return it as an empty array.`,
+    8000);
+  if (!grid.obj) {
+    console.warn('[Parser] LLPA grid call failed to parse; storing base rates without grid. Raw:', grid.raw.substring(0, 300));
+  }
+
+  // Normalize programs: rates carry basePoints; netPoints defaults to basePoints
+  // until the engine applies the borrower's LLPA hits at analysis time.
+  const programs = (prog.obj.programs || []).map(p => ({
     type: p.type,
     isARM: !!p.isARM,
     armType: p.armType || null,
     term: p.term || 30,
-    subtype: p.subtype || null,
-    notes: p.notes || null,
     rates: (p.rates || []).map(rt => ({
       rate: parseFloat(rt.rate),
       basePoints: parseFloat(rt.basePoints),
-      netPoints: parseFloat(rt.basePoints), // pre-LLPA placeholder
+      netPoints: parseFloat(rt.basePoints),
     })).filter(rt => !isNaN(rt.rate) && !isNaN(rt.basePoints)),
   })).filter(p => p.rates.length > 0);
 
   return {
-    effectiveDate: extracted.effectiveDate || '',
+    effectiveDate: prog.obj.effectiveDate || (grid.obj && grid.obj.effectiveDate) || '',
     programs,
-    llpaGrid: extracted.llpaGrid || null,
+    llpaGrid: grid.obj || null,
   };
 }
 
