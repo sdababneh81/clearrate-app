@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { FileText, ChevronRight, ChevronLeft, CheckCircle, AlertCircle, Loader, Shield, TrendingDown, DollarSign, Calculator, Save, FolderOpen, Trash2, X, Pencil, Copy } from 'lucide-react';
+import { FileText, ChevronRight, ChevronLeft, CheckCircle, AlertCircle, Loader, Shield, TrendingDown, DollarSign, Calculator, Save, FolderOpen, Trash2, X, Pencil, Copy, Settings, LogOut } from 'lucide-react';
 import DropZone from './components/DropZone';
 import DebtChecklist from './components/DebtChecklist';
 import AnalysisReport from './components/AnalysisReport';
@@ -36,8 +36,8 @@ function StepIndicator({ current }) {
 
 function Card({ title, children, className }) {
   return (
-    <div className={`bg-white border border-gray-200 rounded-2xl p-6 shadow-sm ${className || ''}`}>
-      {title && <h2 className="text-lg font-bold text-gray-900 mb-5">{title}</h2>}
+    <div className={`bg-white border border-gray-200 rounded-xl p-4 shadow-sm ${className || ''}`}>
+      {title && <h2 className="text-base font-bold text-gray-900 mb-3">{title}</h2>}
       {children}
     </div>
   );
@@ -655,44 +655,55 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-      <header className="bg-[#0f2d5e] text-white px-6 py-4 shadow-lg">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="bg-blue-400/20 p-2 rounded-lg"><TrendingDown className="w-5 h-5" /></div>
-            <div><div className="font-bold text-lg tracking-tight">ClearRate</div><div className="text-blue-300 text-xs">Smart Refinance Analysis</div></div>
-          </div>
-          <div className="flex items-center gap-3">
-            {rateSheetStatus === 'success' && parsedRateSheet && (
-              <div className="hidden sm:flex items-center gap-1.5 bg-green-500/20 border border-green-400/30 rounded-lg px-3 py-1.5 text-xs text-green-300">
-                <span>📊</span>
-                <span>{parsedRateSheet.effective_date || parsedRateSheet.effectiveDate || 'Rate sheet'} · {parsedRateSheet.programs?.length} programs</span>
-              </div>
-            )}
-            {crmBadge && (
-              <div className="hidden sm:flex items-center gap-1.5 bg-blue-500/20 border border-blue-400/30 rounded-lg px-3 py-1.5 text-xs text-blue-300">
-                <span>🔗</span><span>{crmBadge}</span>
-              </div>
-            )}
-            {onOpenAdmin && (
-              <button onClick={onOpenAdmin} className="hidden sm:flex items-center gap-1.5 bg-purple-500/20 border border-purple-400/30 hover:bg-purple-500/30 rounded-lg px-3 py-1.5 text-xs text-purple-300 transition-colors font-semibold">
-                ⚙️ Admin
-              </button>
-            )}
-            {!isIframe && (
-              <button onClick={handleOpenFiles} className="flex items-center gap-1.5 bg-blue-500/20 border border-blue-400/30 hover:bg-blue-500/30 rounded-lg px-3 py-1.5 text-xs text-blue-200 transition-colors font-semibold">
-                <FolderOpen className="w-3.5 h-3.5" /> My Files
-              </button>
-            )}
-            {onSignOut && !isIframe && (
-              <button onClick={onSignOut} className="text-blue-400 hover:text-white text-xs transition-colors">
-                Sign Out
-              </button>
-            )}
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex">
+      {/* ─── Left sidebar nav ─── */}
+      <aside className="w-56 flex-shrink-0 bg-[#0f2d5e] text-white flex flex-col px-3 py-4 sticky top-0 self-start h-screen">
+        <div className="flex items-center gap-2 px-2 pb-4 mb-3 border-b border-white/10">
+          <div className="bg-blue-400/20 p-2 rounded-lg"><TrendingDown className="w-5 h-5" /></div>
+          <div>
+            <div className="font-bold text-base tracking-tight leading-tight">ClearRate</div>
+            <div className="text-blue-300 text-[11px]">Smart Refinance</div>
           </div>
         </div>
-      </header>
 
+        <nav className="flex flex-col gap-1">
+          {!isIframe && (
+            <button onClick={handleOpenFiles}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-blue-100 hover:bg-white/10 transition-colors text-left font-medium">
+              <FolderOpen className="w-4 h-4 flex-shrink-0" /> My Files
+            </button>
+          )}
+          {onOpenAdmin && (
+            <button onClick={onOpenAdmin}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-blue-100 hover:bg-white/10 transition-colors text-left font-medium">
+              <Settings className="w-4 h-4 flex-shrink-0" /> Admin
+            </button>
+          )}
+        </nav>
+
+        <div className="mt-auto flex flex-col gap-2 pt-3">
+          {rateSheetStatus === 'success' && parsedRateSheet && (
+            <div className="flex items-center gap-1.5 bg-green-500/15 border border-green-400/20 rounded-lg px-2.5 py-1.5 text-[11px] text-green-300">
+              <span>📊</span>
+              <span className="truncate">{parsedRateSheet.effective_date || parsedRateSheet.effectiveDate || 'Rate sheet'} · {parsedRateSheet.programs?.length} programs</span>
+            </div>
+          )}
+          {crmBadge && (
+            <div className="flex items-center gap-1.5 bg-blue-500/15 border border-blue-400/20 rounded-lg px-2.5 py-1.5 text-[11px] text-blue-300">
+              <span>🔗</span><span className="truncate">{crmBadge}</span>
+            </div>
+          )}
+          {onSignOut && !isIframe && (
+            <button onClick={onSignOut}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-blue-300 hover:bg-white/10 hover:text-white transition-colors text-left">
+              <LogOut className="w-4 h-4 flex-shrink-0" /> Sign Out
+            </button>
+          )}
+        </div>
+      </aside>
+
+      {/* ─── Main content ─── */}
+      <div className="flex-1 min-w-0">
       <main className="max-w-4xl mx-auto px-4 py-8">
         {/* Current file name banner */}
         {currentFileName && (
@@ -767,11 +778,11 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
         {/* STEP 1 — Client Profile */}
         {step === 1 && (
-          <div className="space-y-6">
+          <div className="space-y-4">
 
             {/* Current Mortgage */}
             <Card title="Current Mortgage">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-3">
                 <Field label="Current Balance *" hint={parsedCredit?.mortgage ? `From credit report` : ''}>
                   <input className={inp} type="number" value={profile.currentBalance} onChange={e => setP('currentBalance', e.target.value)} placeholder="318566" />
                 </Field>
@@ -822,7 +833,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
             {/* Property & Client */}
             <Card title="Property & Client">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
                 <Field label="Borrower Name">
                   <input className={inp} value={profile.borrowerName} onChange={e => setP('borrowerName', e.target.value)} placeholder="Lawrence Tribble Jr." />
                 </Field>
@@ -837,7 +848,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
             {/* New Loan Costs */}
             <Card title="New Loan — Charges">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
                 <Field label="Title & Settlement Charges" hint="Your title company fees — rolled into new loan">
                   <input className={inpHighlight} type="number" value={profile.titleCharges} onChange={e => setP('titleCharges', e.target.value)} placeholder="e.g. 3500" />
                 </Field>
@@ -900,7 +911,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
         {/* STEP 3 — Goals */}
         {step === 3 && (
-          <div className="space-y-6">
+          <div className="space-y-4">
 
             {/* Pricing Strategy — compact row at top */}
             <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 shadow-sm">
@@ -1098,6 +1109,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
           )}
         </div>
       </main>
+      </div>
 
       {/* ─── Cash-out LTV cap block ─── */}
       {ltvBlock && (
