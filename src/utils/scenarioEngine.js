@@ -201,8 +201,11 @@ export function generateScenarios({
         const grid = rateSheet?.llpaGrid || rateSheet?.llpa_grid || null;
         const propValue = parseFloat(estimatedValue) || 0;
         const borrowerLTV = propValue > 0 ? Math.round((baseLoanAmount / propValue) * 1000) / 10 : null;
+        // Normalize program type → which UWM adjustment system applies.
+        const ptype = (program.type || '').toLowerCase();
+        const loanType = ptype.includes('va') ? 'va' : ptype.includes('fha') ? 'fha' : 'conventional';
         const llpa = grid
-          ? applyLLPA(grid, { fico: parseFloat(ficoScore) || null, ltv: borrowerLTV, isCashOut: goal === 'cash_out', flags: clientProfile.llpaFlags })
+          ? applyLLPA(grid, { loanType, fico: parseFloat(ficoScore) || null, ltv: borrowerLTV, isCashOut: goal === 'cash_out' })
           : { totalHit: 0, hits: null };
 
         const ratesForStack = rawRates.map(r => {
