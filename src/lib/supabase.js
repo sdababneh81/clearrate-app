@@ -177,14 +177,14 @@ export async function getSavedAnalyses(userId) {
 }
 
 export async function getSavedAnalysis(id, userId) {
-  let q = supabase
-    .from('saved_analyses')
-    .select('*')
-    .eq('id', id)
-  if (userId) q = q.eq('lo_user_id', userId)
-  const { data, error } = await q.limit(1)
-  if (error) throw error
-  return (data && data[0]) || null
+  // First try the same shape as the (working) list query: explicit user scope.
+  let res = await supabase.from('saved_analyses').select('*').eq('id', id).eq('lo_user_id', userId).limit(1)
+  if (res.error) throw new Error('DB error (scoped): ' + res.error.message)
+  if (res.data && res.data[0]) return res.data[0]
+  // Fallback: id only (RLS still scopes to the signed-in user).
+  res = await supabase.from('saved_analyses').select('*').eq('id', id).limit(1)
+  if (res.error) throw new Error('DB error (id-only): ' + res.error.message)
+  return (res.data && res.data[0]) || null
 }
 
 export async function renameAnalysis(id, fileName) {
