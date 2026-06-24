@@ -589,19 +589,18 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     setFilesLoading(true);
     setError('');
     try {
-      const file = await getSavedAnalysis(fileId);
-      if (!file) throw new Error('File not found.');
-      if (!file.snapshot) throw new Error('This saved file has no snapshot data and cannot be reopened.');
-      applySnapshot(file.snapshot);
+      const file = await getSavedAnalysis(fileId, user?.id);
+      if (!file) throw new Error('File not found (it may belong to another account or was deleted).');
+      const snap = file.snapshot || {};
+      applySnapshot(snap);
       setCurrentFileId(file.id);
       setCurrentFileName(file.file_name);
-      // Opening an existing file shouldn't immediately re-autosave it.
-      autoSaveRef.current.savedRef = file.snapshot.runRef || file.run_ref || null;
+      autoSaveRef.current.savedRef = snap.runRef || file.run_ref || null;
       setShowFiles(false);
       setResult(null);
       setStep(edit ? 1 : 4);
       if (!edit) {
-        setTimeout(() => regenerateFromState(file.snapshot), 0);
+        setTimeout(() => regenerateFromState(snap), 0);
       }
     } catch (e) {
       console.error('[Files] open failed:', e);
@@ -613,6 +612,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
   // Generate scenarios directly from a snapshot (used when opening a saved file)
   const regenerateFromState = (snap) => {
     try {
+      if (!snap || !snap.profile) throw new Error('Saved file is missing input data.');
       const clientProfile = {
         ...snap.profile,
         currentBalance: parseFloat(snap.profile.currentBalance),
