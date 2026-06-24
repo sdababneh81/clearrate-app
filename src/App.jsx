@@ -414,7 +414,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
   const handleReset = () => {
     setStep(0); setResult(null); setParsedCredit(null); setParsedRateSheet(null);
-    setCreditStatus('idle'); setRateSheetStatus('idle'); setCreditFile(null); setRateSheetFile(null);
+    setCreditStatus('idle'); setCreditFile(null); setRateSheetFile(null);
     setDebts([]); setProfile({ borrowerName:'', ficoScore:'', estimatedValue:'', currentBalance:'', originalLoanAmount:'', currentRate:'', currentTermRemaining:'', currentPayment:'', escrow:'', mortgageLender:'', titleCharges:'', cashOutAmount:'', manualRate:'', propertyAddress:'' });
     setIsVeteran(null); setSelectedPrograms(['Conventional','FHA']); setGoalType('rate_term');
     setMarginBPS(''); setMarginDollar(''); setYearsInHome(''); setMaxPointsPct('5');
@@ -510,7 +510,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     setLenderFees(snap.lenderFees ?? '');
     if (snap.pricingStrategies) setPricingStrategies(snap.pricingStrategies);
     setCurrentRunRef(snap.runRef || null);
-    if (snap.rateSheet) { setParsedRateSheet(snap.rateSheet); setRateSheetStatus('success'); }
+    if (snap.rateSheet) { setParsedRateSheet(snap.rateSheet); }
   };
 
   const loadSavedFiles = async () => {
