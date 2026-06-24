@@ -95,6 +95,9 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
   const [maxPointsPct, setMaxPointsPct] = useState('5');
 
   const [isVeteran, setIsVeteran] = useState(null);
+  const [fundingFeeExempt, setFundingFeeExempt] = useState(false);
+  const [convMI, setConvMI] = useState('');
+  const [convMIType, setConvMIType] = useState('percent'); // 'percent' | 'dollar'
   const [ltvBlock, setLtvBlock] = useState(null);   // {ltv, cap, programs} when a debt toggle is blocked
   const autoSaveRef = useRef({ savedRef: null, timer: null });
   const [yearsInHome, setYearsInHome] = useState('');
@@ -394,6 +397,9 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         yearsInHome: parseFloat(yearsInHome) || null,
         maxPointsPct: Number.isFinite(parseFloat(maxPointsPct)) ? parseFloat(maxPointsPct) : 5.0,
         pricingStrategies,
+        fundingFeeExempt,
+        convMI: parseFloat(convMI) || 0,
+        convMIType,
         runRef: currentRunRef || undefined,
       });
       if (res?.runRef) setCurrentRunRef(res.runRef);
@@ -416,7 +422,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     setStep(0); setResult(null); setParsedCredit(null); setParsedRateSheet(null);
     setCreditStatus('idle'); setCreditFile(null); setRateSheetFile(null);
     setDebts([]); setProfile({ borrowerName:'', ficoScore:'', estimatedValue:'', currentBalance:'', originalLoanAmount:'', currentRate:'', currentTermRemaining:'', currentPayment:'', escrow:'', mortgageLender:'', titleCharges:'', cashOutAmount:'', manualRate:'', propertyAddress:'' });
-    setIsVeteran(null); setSelectedPrograms(['Conventional','FHA']); setGoalType('rate_term');
+    setIsVeteran(null); setFundingFeeExempt(false); setConvMI(''); setConvMIType('percent'); setSelectedPrograms(['Conventional','FHA']); setGoalType('rate_term');
     setMarginBPS(''); setMarginDollar(''); setYearsInHome(''); setMaxPointsPct('5');
     setCrmBadge(''); setLenderFees(''); setPricingStrategies(['lowest_rate', 'margin_cost', 'no_cost']);
     setCurrentFileId(null); setCurrentFileName(''); setCurrentRunRef(null); setSaveStatus('idle');
@@ -438,6 +444,9 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     yearsInHome,
     lenderFees,
     pricingStrategies,
+    fundingFeeExempt,
+    convMI,
+    convMIType,
     runRef: currentRunRef || null,
     // Snapshot the rate sheet used so the analysis can be reproduced even after
     // the active sheet changes day-to-day.
@@ -509,6 +518,9 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     setYearsInHome(snap.yearsInHome ?? '');
     setLenderFees(snap.lenderFees ?? '');
     if (snap.pricingStrategies) setPricingStrategies(snap.pricingStrategies);
+    setFundingFeeExempt(snap.fundingFeeExempt || false);
+    setConvMI(snap.convMI ?? '');
+    setConvMIType(snap.convMIType || 'percent');
     setCurrentRunRef(snap.runRef || null);
     if (snap.rateSheet) { setParsedRateSheet(snap.rateSheet); }
   };
@@ -634,6 +646,9 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         yearsInHome: parseFloat(snap.yearsInHome) || null,
         maxPointsPct: Number.isFinite(parseFloat(snap.maxPointsPct)) ? parseFloat(snap.maxPointsPct) : 5.0,
         pricingStrategies: snap.pricingStrategies || ['lowest_rate', 'margin_cost', 'no_cost'],
+        fundingFeeExempt: snap.fundingFeeExempt || false,
+        convMI: parseFloat(snap.convMI) || 0,
+        convMIType: snap.convMIType || 'percent',
         runRef: snap.runRef || undefined,
       });
       if (res?.runRef) setCurrentRunRef(res.runRef);
@@ -855,6 +870,17 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                 <Field label="Lender Fees (Processing + Underwriting)" hint="Total of lender's processing and underwriting fees">
                   <input className={inp} type="number" value={lenderFees} onChange={e => setLenderFees(e.target.value)} placeholder="e.g. 1495" />
                 </Field>
+                <Field label="Conventional MI (monthly estimate)" hint="Applies to Conventional only. Enter % (annual, e.g. 0.22) or flat $/mo.">
+                  <div className="flex items-center gap-2">
+                    <input className={inp} type="number" step="0.01" value={convMI} onChange={e => setConvMI(e.target.value)} placeholder={convMIType === 'percent' ? '0.22' : '95'} />
+                    <div className="flex rounded-lg border border-gray-200 overflow-hidden flex-shrink-0">
+                      {[['percent','%'],['dollar','$']].map(([val,lab]) => (
+                        <button key={val} onClick={() => setConvMIType(val)}
+                          className={`px-3 py-2 text-sm font-semibold transition-colors ${convMIType === val ? 'bg-blue-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}>{lab}</button>
+                      ))}
+                    </div>
+                  </div>
+                </Field>
                 {!parsedRateSheet && (
                   <Field label="Manual New Rate (%)" hint="Used when no rate sheet uploaded">
                     <input className={inp} type="number" step="0.001" value={profile.manualRate} onChange={e => setP('manualRate', e.target.value)} placeholder="6.500" />
@@ -887,10 +913,23 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
               </div>
               <div className="flex gap-4">
                 {[[true,'🎖️ Yes — VA eligible'],[false,'👤 No — not a veteran']].map(([val, label]) => (
-                  <button key={String(val)} onClick={() => { setIsVeteran(val); if (val) setSelectedPrograms(p => [...new Set([...p, 'VA'])]); }}
+                  <button key={String(val)} onClick={() => { setIsVeteran(val); if (val) setSelectedPrograms(p => [...new Set([...p, 'VA'])]); else setFundingFeeExempt(false); }}
                     className={`flex-1 py-3 rounded-xl border-2 font-semibold text-sm transition-all ${isVeteran === val ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600 hover:border-blue-300'}`}>{label}</button>
                 ))}
               </div>
+
+              {isVeteran === true && (
+                <div className="mt-4 pt-4 border-t border-gray-100">
+                  <p className="font-semibold text-gray-800 text-sm mb-2">Is the client exempt from the VA funding fee?</p>
+                  <p className="text-xs text-gray-400 mb-3">Service-connected disability, Purple Heart, or qualifying surviving spouse → no funding fee.</p>
+                  <div className="flex gap-4">
+                    {[[false,'No — funding fee applies'],[true,'✅ Yes — exempt (0%)']].map(([val, label]) => (
+                      <button key={String(val)} onClick={() => setFundingFeeExempt(val)}
+                        className={`flex-1 py-2.5 rounded-xl border-2 font-semibold text-sm transition-all ${fundingFeeExempt === val ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600 hover:border-blue-300'}`}>{label}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </Card>
           </div>
         )}
