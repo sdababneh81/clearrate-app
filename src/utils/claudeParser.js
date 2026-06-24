@@ -92,14 +92,10 @@ export async function parseRateSheetBase(file) {
 1. BASE RATE PRICES — the raw 30-day lock prices BEFORE any LLPA adjustments, for every program and every rate.
 2. LLPA ADJUSTMENT GRID — all the pricing-hit tables (credit score x LTV, cash-out by LTV, loan type, occupancy, units, etc.).
 
-Return ONLY valid JSON, no markdown, no explanation:
+Return ONLY valid JSON, no markdown, no explanation. Put llpaGrid FIRST (before programs):
 
 {
   "effectiveDate": "string or empty",
-  "programs": [
-    { "type": "VA|Conventional|FHA", "isARM": false, "armType": null, "term": 30,
-      "rates": [ { "rate": 6.500, "basePoints": -0.250 } ] }
-  ],
   "llpaGrid": {
     "creditScore": [
       { "min": 740, "max": 759, "adjustments": { "ltv_60": 0.000, "ltv_65": 0.000, "ltv_70": 0.250, "ltv_75": 0.250, "ltv_80": 0.500, "ltv_85": 0.500, "ltv_90": 0.750, "ltv_95": 0.750, "ltv_97": 0.750 } }
@@ -113,7 +109,11 @@ Return ONLY valid JSON, no markdown, no explanation:
       { "description": "Investment Property", "hit": 1.750, "when": "investment" },
       { "description": "2-unit property", "hit": 1.000, "when": "units2" }
     ]
-  }
+  },
+  "programs": [
+    { "type": "VA|Conventional|FHA", "isARM": false, "armType": null, "term": 30,
+      "rates": [ { "rate": 6.500, "basePoints": -0.250 } ] }
+  ]
 }
 
 Rules:
@@ -129,16 +129,25 @@ Rules:
   const r = await fetch(CLAUDE_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 8000, messages: [{ role: 'user', content }] })
+    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 16000, messages: [{ role: 'user', content }] })
   });
 
   if (!r.ok) throw new Error(`Rate sheet API error ${r.status}: ${(await r.text()).substring(0, 200)}`);
   const d = await r.json();
+  const stopReason = d.stop_reason;
   const raw = d.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
 
-  let extracted;
-  try { extracted = JSON.parse(raw); }
-  catch (e) { throw new Error('Could not parse rate sheet. Raw: ' + raw.substring(0, 400)); }
+  const extracted = parseJsonLoose(raw);
+  if (!extracted) {
+    throw new Error(
+      (stopReason === 'max_tokens'
+        ? 'Rate sheet response was cut off (too large to parse even after repair). '
+        : 'Could not parse rate sheet. ') + 'Raw: ' + raw.substring(0, 400)
+    );
+  }
+  if (stopReason === 'max_tokens') {
+    console.warn('[Parser] Response hit max_tokens; salvaged via JSON repair. Some trailing rates may be missing.');
+  }
 
   // Normalize: rates carry basePoints; netPoints defaults to basePoints until the
   // engine applies the borrower's LLPA hits at analysis time.
@@ -147,6 +156,8 @@ Rules:
     isARM: !!p.isARM,
     armType: p.armType || null,
     term: p.term || 30,
+    subtype: p.subtype || null,
+    notes: p.notes || null,
     rates: (p.rates || []).map(rt => ({
       rate: parseFloat(rt.rate),
       basePoints: parseFloat(rt.basePoints),
@@ -159,6 +170,42 @@ Rules:
     programs,
     llpaGrid: extracted.llpaGrid || null,
   };
+}
+
+/**
+ * Parse JSON, tolerating a response that was truncated mid-stream (max_tokens).
+ * Strategy: try strict parse; if it fails, trim back to the last complete object
+ * inside the most recent array, then close any still-open brackets/braces.
+ */
+function parseJsonLoose(text) {
+  if (!text) return null;
+  try { return JSON.parse(text); } catch (_) {}
+
+  let s = text;
+  // Drop any trailing partial token after the last complete value boundary.
+  const lastBoundary = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']'));
+  if (lastBoundary === -1) return null;
+  s = s.slice(0, lastBoundary + 1);
+
+  // Walk the string tracking depth + string state, then append the closers needed.
+  const stack = [];
+  let inStr = false, esc = false;
+  for (const ch of s) {
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{' || ch === '[') stack.push(ch);
+    else if (ch === '}' || ch === ']') stack.pop();
+  }
+  // Remove a dangling comma before closing.
+  s = s.replace(/,\s*$/, '');
+  let closers = '';
+  for (let i = stack.length - 1; i >= 0; i--) closers += stack[i] === '{' ? '}' : ']';
+  try { return JSON.parse(s + closers); } catch (_) { return null; }
 }
 
 
