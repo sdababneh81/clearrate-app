@@ -622,7 +622,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
         </div>
 
         {/* Internal Price Stack — admins/managers only; LOs never see the margin */}
-        {isAdmin && (s.marginBPS ?? marginBPS) > 0 && (() => {
+        {isAdmin && (() => {
           const mBPS = s.marginBPS ?? marginBPS;
           const brokerMarginPct = (parseFloat(mBPS) || 0) / 100;
           const baseNetPoints = (s.netPointsPct ?? 0) - brokerMarginPct;
