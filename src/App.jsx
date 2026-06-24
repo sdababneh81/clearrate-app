@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
-import { FileText, ChevronRight, ChevronLeft, CheckCircle, AlertCircle, Loader, Shield, TrendingDown, DollarSign, Calculator, Save, FolderOpen, Trash2, X, Pencil } from 'lucide-react';
+import { FileText, ChevronRight, ChevronLeft, CheckCircle, AlertCircle, Loader, Shield, TrendingDown, DollarSign, Calculator, Save, FolderOpen, Trash2, X, Pencil, Copy } from 'lucide-react';
 import DropZone from './components/DropZone';
 import DebtChecklist from './components/DebtChecklist';
 import AnalysisReport from './components/AnalysisReport';
 import { parseCreditReport, parseRateSheet } from './utils/claudeParser';
-import { getActiveRateSheet, saveAnalysis, getSavedAnalyses, getSavedAnalysis, deleteSavedAnalysis, getMarginSettings } from './lib/supabase.js';
+import { getActiveRateSheet, saveAnalysis, getSavedAnalyses, getSavedAnalysis, deleteSavedAnalysis, getMarginSettings, renameAnalysis, duplicateAnalysis } from './lib/supabase.js';
 import { analyzeDebt } from './utils/debtOptimizer';
 import { generateScenarios } from './utils/scenarioEngine';
 import { calcPI, reverseEngineerTerm } from './utils/mortgageCalc';
@@ -443,17 +443,28 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
   const handleOpenFiles = () => { setShowFiles(true); loadSavedFiles(); };
 
-  const handleSaveFile = async () => {
+  const handleSaveFile = async ({ asNew = false } = {}) => {
     if (!user?.id) { setError('You must be signed in to save files.'); return; }
     const name = (currentFileName || profile.borrowerName || 'Untitled').trim();
     setSaveStatus('saving');
     try {
+      const rec = result?.recommended;
+      const summary = rec ? {
+        rate: rec.rate,
+        monthlySavings: rec.monthlySavings,
+        program: rec.program,
+        isARM: rec.isARM,
+        goal: rec.goal,
+        newLoanAmount: rec.newLoanAmount,
+      } : null;
       const saved = await saveAnalysis({
-        id: currentFileId || undefined,
-        fileName: name,
+        id: asNew ? undefined : (currentFileId || undefined),
+        fileName: asNew ? `${name} (v2)` : name,
         borrowerName: profile.borrowerName || name,
         snapshot: buildSnapshot(),
         userId: user.id,
+        runRef: result?.runRef || currentRunRef || null,
+        summary,
       });
       setCurrentFileId(saved.id);
       setCurrentFileName(saved.file_name);
@@ -463,6 +474,29 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
       console.error('[Files] save failed:', e);
       setSaveStatus('error');
       setError('Could not save file: ' + (e?.message || e));
+    }
+  };
+
+  const handleRenameFile = async (fileId, currentName) => {
+    const next = (prompt('Rename file:', currentName) || '').trim();
+    if (!next || next === currentName) return;
+    try {
+      const updated = await renameAnalysis(fileId, next);
+      setSavedFiles(prev => prev.map(f => f.id === fileId ? { ...f, ...updated } : f));
+      if (currentFileId === fileId) setCurrentFileName(next);
+    } catch (e) {
+      console.error('[Files] rename failed:', e);
+      setError('Could not rename file: ' + (e?.message || e));
+    }
+  };
+
+  const handleDuplicateFile = async (fileId) => {
+    try {
+      const copy = await duplicateAnalysis(fileId, user.id);
+      setSavedFiles(prev => [copy, ...prev]);
+    } catch (e) {
+      console.error('[Files] duplicate failed:', e);
+      setError('Could not duplicate file: ' + (e?.message || e));
     }
   };
 
@@ -959,11 +993,18 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                   {result?.runRef || currentRunRef}
                 </span>
               )}
-              <button onClick={handleSaveFile} disabled={saveStatus === 'saving'}
+              <button onClick={() => handleSaveFile()} disabled={saveStatus === 'saving'}
                 className="flex items-center gap-2 px-5 py-2.5 bg-white border border-blue-300 text-blue-700 rounded-xl text-sm font-semibold hover:bg-blue-50 transition-colors disabled:opacity-50">
                 <Save className="w-4 h-4" />
                 {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? 'Saved ✓' : currentFileId ? 'Update File' : 'Save File'}
               </button>
+              {currentFileId && (
+                <button onClick={() => handleSaveFile({ asNew: true })} disabled={saveStatus === 'saving'}
+                  title="Save these changes as a separate file, keeping the original"
+                  className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50">
+                  <Copy className="w-4 h-4" /> Save as New
+                </button>
+              )}
               <button onClick={handleReset} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors">
                 New Analysis
               </button>
@@ -996,30 +1037,46 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {savedFiles.map(f => (
+                  {savedFiles.map(f => {
+                    const sum = f.summary || {};
+                    const fmtRate = sum.rate != null ? `${Number(sum.rate).toFixed(3)}%` : null;
+                    const fmtSav = sum.monthlySavings != null ? `${sum.monthlySavings > 0 ? '+' : ''}$${Math.round(sum.monthlySavings).toLocaleString()}/mo` : null;
+                    return (
                     <div key={f.id} className="flex items-center gap-3 border border-gray-200 rounded-xl px-4 py-3 hover:border-blue-300 hover:bg-blue-50/30 transition-colors">
                       <FileText className="w-5 h-5 text-blue-500 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-sm text-gray-900 truncate">{f.file_name}</div>
-                        <div className="text-xs text-gray-400">
-                          {f.borrower_name} · updated {new Date(f.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                          {f.snapshot?.runRef ? <span className="font-mono text-gray-400"> · {f.snapshot.runRef}</span> : null}
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-sm text-gray-900 truncate">{f.file_name}</span>
+                          {f.run_ref && <span className="font-mono text-[11px] font-semibold text-gray-500 bg-gray-100 border border-gray-200 rounded px-1.5 py-0.5 flex-shrink-0">{f.run_ref}</span>}
+                        </div>
+                        <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2 flex-wrap">
+                          <span>{f.borrower_name}</span>
+                          {fmtRate && <span className="text-gray-500">· {sum.isARM ? (sum.program ? sum.program + ' ARM' : 'ARM') : '30yr'} {fmtRate}</span>}
+                          {fmtSav && <span className={sum.monthlySavings > 0 ? 'text-green-600 font-semibold' : 'text-gray-500'}>· {fmtSav}</span>}
+                          <span>· {new Date(f.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                         </div>
                       </div>
-                      <button onClick={() => handleOpenFile(f.id, { edit: false })}
+                      <button onClick={() => handleOpenFile(f.id, { edit: false })} title="Open the saved analysis"
                         className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800 px-2 py-1">
                         <FolderOpen className="w-3.5 h-3.5" /> Open
                       </button>
-                      <button onClick={() => handleOpenFile(f.id, { edit: true })}
+                      <button onClick={() => handleOpenFile(f.id, { edit: true })} title="Reopen and edit the inputs (no need to re-upload the credit report)"
                         className="flex items-center gap-1 text-xs font-semibold text-gray-600 hover:text-gray-800 px-2 py-1">
                         <Pencil className="w-3.5 h-3.5" /> Edit
                       </button>
-                      <button onClick={() => { if (confirm('Delete this file?')) handleDeleteFile(f.id); }}
+                      <button onClick={() => handleRenameFile(f.id, f.file_name)} title="Rename"
+                        className="text-gray-300 hover:text-gray-600 px-1 text-xs font-semibold">Rename</button>
+                      <button onClick={() => handleDuplicateFile(f.id)} title="Duplicate as a new scenario"
+                        className="text-gray-300 hover:text-blue-600 px-1">
+                        <Copy className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => { if (confirm('Delete this file?')) handleDeleteFile(f.id); }} title="Delete"
                         className="text-gray-300 hover:text-red-500 px-1">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
