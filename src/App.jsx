@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { FileText, ChevronRight, ChevronLeft, CheckCircle, AlertCircle, Loader, Shield, TrendingDown, DollarSign, Calculator, Save, FolderOpen, Trash2, X, Pencil, Copy } from 'lucide-react';
 import DropZone from './components/DropZone';
 import DebtChecklist from './components/DebtChecklist';
@@ -96,6 +96,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
   const [isVeteran, setIsVeteran] = useState(null);
   const [ltvBlock, setLtvBlock] = useState(null);   // {ltv, cap, programs} when a debt toggle is blocked
+  const autoSaveRef = useRef({ savedRef: null, timer: null });
   const [yearsInHome, setYearsInHome] = useState('');
   const [propertyLookupStatus, setPropertyLookupStatus] = useState('idle'); // idle | loading | found | notfound
   const [debts, setDebts] = useState([]);
@@ -419,6 +420,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     setMarginBPS(''); setMarginDollar(''); setYearsInHome(''); setMaxPointsPct('5');
     setCrmBadge(''); setLenderFees(''); setPricingStrategies(['lowest_rate', 'margin_cost', 'no_cost']);
     setCurrentFileId(null); setCurrentFileName(''); setCurrentRunRef(null); setSaveStatus('idle');
+    autoSaveRef.current = { savedRef: null, timer: null };
   };
 
   // ─── Saved files: snapshot the full input state so a file is reproducible ──
@@ -441,6 +443,47 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     // the active sheet changes day-to-day.
     rateSheet: parsedRateSheet,
   });
+
+  // ─── Auto-save: every completed analysis is saved without a button press. ──
+  // Updates the SAME file for the current borrower/run (keyed by currentFileId)
+  // so re-running doesn't pile up duplicates; a new borrower (after Reset) starts
+  // a fresh file. "Save as New" still lets the LO deliberately fork a scenario.
+  useEffect(() => {
+    if (step !== 4 || !result || generating || !user?.id) return;
+    const rr = result.runRef || currentRunRef;
+    if (!rr) return;
+    if (autoSaveRef.current.savedRef === rr && currentFileId) return; // already saved this run
+    clearTimeout(autoSaveRef.current.timer);
+    autoSaveRef.current.timer = setTimeout(async () => {
+      try {
+        setSaveStatus('saving');
+        const rec = result.recommended;
+        const summary = rec ? {
+          rate: rec.rate, monthlySavings: rec.monthlySavings, program: rec.program,
+          isARM: rec.isARM, goal: rec.goal, newLoanAmount: rec.newLoanAmount,
+        } : null;
+        const saved = await saveAnalysis({
+          id: currentFileId || undefined,
+          fileName: (currentFileName || profile.borrowerName || 'Untitled').trim(),
+          borrowerName: profile.borrowerName || 'Untitled',
+          snapshot: buildSnapshot(),
+          userId: user.id,
+          runRef: rr,
+          summary,
+        });
+        setCurrentFileId(saved.id);
+        if (!currentFileName) setCurrentFileName(saved.file_name);
+        autoSaveRef.current.savedRef = rr;
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000);
+      } catch (e) {
+        console.error('[autosave] failed:', e);
+        setSaveStatus('error');
+      }
+    }, 900);
+    return () => clearTimeout(autoSaveRef.current.timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, step, generating, user, currentFileId, currentRunRef]);
 
   const applySnapshot = (snap) => {
     if (!snap) return;
@@ -532,19 +575,20 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
   const handleOpenFile = async (fileId, { edit = false } = {}) => {
     setFilesLoading(true);
+    setError('');
     try {
       const file = await getSavedAnalysis(fileId);
-      if (!file) throw new Error('File not found');
+      if (!file) throw new Error('File not found.');
+      if (!file.snapshot) throw new Error('This saved file has no snapshot data and cannot be reopened.');
       applySnapshot(file.snapshot);
       setCurrentFileId(file.id);
       setCurrentFileName(file.file_name);
+      // Opening an existing file shouldn't immediately re-autosave it.
+      autoSaveRef.current.savedRef = file.snapshot.runRef || file.run_ref || null;
       setShowFiles(false);
       setResult(null);
-      // Re-run the analysis from the snapshot so the report reflects saved inputs.
-      // edit=true drops the user on Step 1 to adjust; otherwise jump to analysis.
       setStep(edit ? 1 : 4);
       if (!edit) {
-        // Defer generation until state has applied
         setTimeout(() => regenerateFromState(file.snapshot), 0);
       }
     } catch (e) {
@@ -660,7 +704,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
         <StepIndicator current={step} />
 
-        {error && step >= 3 && (
+        {error && (
           <div className="flex items-start gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl mb-6 text-sm">
             <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /><span>{error}</span>
           </div>
