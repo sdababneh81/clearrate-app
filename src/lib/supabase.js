@@ -124,12 +124,12 @@ export async function getCRMSession(sessionId) {
 
 // ─── Saved Analyses (client files) ────────────────────────────
 // snapshot = full input state so a file can be reopened, edited, and reprinted.
-export async function saveAnalysis({ id, fileName, borrowerName, snapshot, userId, runRef = null, summary = null }) {
+export async function saveAnalysis({ id, fileName, borrowerName, propertyAddress = null, snapshot, userId, runRef = null, summary = null }) {
   if (id) {
     // Update existing file
     const { data, error } = await supabase
       .from('saved_analyses')
-      .update({ file_name: fileName, borrower_name: borrowerName, snapshot, run_ref: runRef, summary, updated_at: new Date().toISOString() })
+      .update({ file_name: fileName, borrower_name: borrowerName, property_address: propertyAddress, snapshot, run_ref: runRef, summary, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single()
@@ -138,17 +138,37 @@ export async function saveAnalysis({ id, fileName, borrowerName, snapshot, userI
   }
   const { data, error } = await supabase
     .from('saved_analyses')
-    .insert({ file_name: fileName, borrower_name: borrowerName, snapshot, run_ref: runRef, summary, lo_user_id: userId })
+    .insert({ file_name: fileName, borrower_name: borrowerName, property_address: propertyAddress, snapshot, run_ref: runRef, summary, lo_user_id: userId })
     .select()
     .single()
   if (error) throw error
   return data
 }
 
+// Find an existing saved file for the same borrower (name + property address),
+// so auto-save can overwrite it instead of creating duplicates.
+export async function findAnalysisByBorrower(userId, borrowerName, propertyAddress) {
+  const name = (borrowerName || '').trim().toLowerCase()
+  if (!name) return null
+  const addr = (propertyAddress || '').trim().toLowerCase()
+  const { data, error } = await supabase
+    .from('saved_analyses')
+    .select('id, file_name, borrower_name, property_address, updated_at')
+    .eq('lo_user_id', userId)
+    .order('updated_at', { ascending: false })
+    .limit(100)
+  if (error) throw error
+  const match = (data || []).find(f =>
+    (f.borrower_name || '').trim().toLowerCase() === name &&
+    (f.property_address || '').trim().toLowerCase() === addr
+  )
+  return match || null
+}
+
 export async function getSavedAnalyses(userId) {
   const { data, error } = await supabase
     .from('saved_analyses')
-    .select('id, file_name, borrower_name, run_ref, summary, created_at, updated_at')
+    .select('id, file_name, borrower_name, property_address, run_ref, summary, created_at, updated_at')
     .eq('lo_user_id', userId)
     .order('updated_at', { ascending: false })
     .limit(200)
@@ -171,7 +191,7 @@ export async function renameAnalysis(id, fileName) {
     .from('saved_analyses')
     .update({ file_name: fileName, updated_at: new Date().toISOString() })
     .eq('id', id)
-    .select('id, file_name, borrower_name, run_ref, summary, created_at, updated_at')
+    .select('id, file_name, borrower_name, property_address, run_ref, summary, created_at, updated_at')
     .single()
   if (error) throw error
   return data
@@ -190,7 +210,7 @@ export async function duplicateAnalysis(id, userId) {
       summary: src.summary,
       lo_user_id: userId,
     })
-    .select('id, file_name, borrower_name, run_ref, summary, created_at, updated_at')
+    .select('id, file_name, borrower_name, property_address, run_ref, summary, created_at, updated_at')
     .single()
   if (error) throw error
   return data
