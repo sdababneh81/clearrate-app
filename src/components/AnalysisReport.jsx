@@ -697,7 +697,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                       )) : Array.isArray(s.llpaHits) ? (
                         <tr className="border-b border-gray-100 bg-gray-50">
                           <td className="px-4 py-2 text-gray-500 text-xs">
-                            ⚡ LLPA Adjustments — none for this profile (FICO {clientProfile?.ficoScore}, LTV ~{clientProfile?.estimatedValue ? Math.round((parseFloat(clientProfile.currentBalance) / parseFloat(clientProfile.estimatedValue)) * 100) : '?'}%, {s.goal === 'cash_out' ? 'Cash-Out' : 'Rate/Term'})
+                            ⚡ LLPA Adjustments — none for this profile (FICO {clientProfile?.ficoScore}, LTV ~{clientProfile?.estimatedValue ? Math.round((s.newLoanAmount / parseFloat(clientProfile.estimatedValue)) * 100) : '?'}%, {s.goal === 'cash_out' ? 'Cash-Out' : 'Rate/Term'})
                           </td>
                           <td className="px-4 py-2 text-right font-mono text-xs text-gray-400">0.000%</td>
                           <td className="px-4 py-2 text-right font-mono text-xs text-gray-400">$0</td>
@@ -707,7 +707,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                         return llpaTotal !== 0 ? (
                           <tr className="border-b border-orange-50 bg-orange-50">
                             <td className="px-4 py-2 text-orange-800 text-xs font-semibold">
-                              ⚡ LLPA Adjustments (FICO {clientProfile?.ficoScore}, LTV ~{clientProfile?.estimatedValue ? Math.round((parseFloat(clientProfile.currentBalance) / parseFloat(clientProfile.estimatedValue)) * 100) : '?'}%, {s.goal === 'cash_out' ? 'Cash-Out' : 'Rate/Term'})
+                              ⚡ LLPA Adjustments (FICO {clientProfile?.ficoScore}, LTV ~{clientProfile?.estimatedValue ? Math.round((s.newLoanAmount / parseFloat(clientProfile.estimatedValue)) * 100) : '?'}%, {s.goal === 'cash_out' ? 'Cash-Out' : 'Rate/Term'})
                             </td>
                             <td className={`px-4 py-2 text-right font-mono text-xs font-bold ${llpaTotal <= 0 ? 'text-green-700' : 'text-orange-700'}`}>
                               {llpaTotal <= 0 ? '' : '+'}{llpaTotal.toFixed(3)}%
