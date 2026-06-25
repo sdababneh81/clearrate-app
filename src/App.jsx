@@ -194,20 +194,24 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
   }, [crmSession]);
 
   // Auto-calculate P&I when balance/rate/term change
-  const calculatedPI = (() => {
-    const b = parseFloat(profile.currentBalance);
-    const r = parseFloat(profile.currentRate);
-    const t = parseFloat(profile.currentTermRemaining);
-    if (b && r && t) return calcPI(b, r, t);
-    return null;
-  })();
-
-  // Auto-calculate remaining term from payment if entered
+  // Reverse-engineer the remaining term from balance + rate + payment when the
+  // LO hasn't typed a term. P&I then uses whichever term we have (typed or derived)
+  // so the payment breakdown shows up even when the term is inferred from payment.
   const calculatedTerm = (() => {
     const b = parseFloat(profile.currentBalance);
     const r = parseFloat(profile.currentRate);
     const pmt = parseFloat(profile.currentPayment);
     if (b && r && pmt && !profile.currentTermRemaining) return reverseEngineerTerm(b, r, pmt);
+    return null;
+  })();
+
+  const effectiveTerm = parseFloat(profile.currentTermRemaining) || calculatedTerm;
+
+  const calculatedPI = (() => {
+    const b = parseFloat(profile.currentBalance);
+    const r = parseFloat(profile.currentRate);
+    const t = effectiveTerm;
+    if (b && r && t) return calcPI(b, r, t);
     return null;
   })();
 
