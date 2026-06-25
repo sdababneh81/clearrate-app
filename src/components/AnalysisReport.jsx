@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Star, TrendingDown, Clock, DollarSign, CheckCircle, AlertCircle, Printer, ChevronRight, LayoutList, Rows } from 'lucide-react';
+import { Star, TrendingDown, Clock, DollarSign, CheckCircle, AlertCircle, Printer, ChevronRight, LayoutList, Rows, Plus } from 'lucide-react';
 
 // Collapsible section for the on-screen report. In "full" mode it renders the
 // content plainly (no header/toggle). In "compact" mode it shows a clickable
@@ -36,7 +36,7 @@ function SummaryCell({ label, value, sub, highlight }) {
   );
 }
 
-function ScenarioCard({ scenario: sc, isRecommended, isSelected, onSelect }) {
+function ScenarioCard({ scenario: sc, isRecommended, isSelected, onSelect, inComparison = false, onToggleCompare }) {
   const recoupOk = !sc.breakevenMonths || sc.breakevenMonths <= 24;
   const recoupWarn = sc.breakevenMonths > 24 && sc.breakevenMonths <= 36;
 
@@ -51,6 +51,18 @@ function ScenarioCard({ scenario: sc, isRecommended, isSelected, onSelect }) {
         <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-500 text-white text-xs font-bold px-3 py-0.5 rounded-full flex items-center gap-1">
           <Star className="w-3 h-3" /> AI RECOMMENDED
         </div>
+      )}
+
+      {onToggleCompare && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleCompare(sc); }}
+          className={`absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold border transition-colors no-print ${
+            inComparison ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-400 hover:border-blue-400 hover:text-blue-600'
+          }`}
+          title="Add this option to the client comparison sheet">
+          {inComparison ? <CheckCircle className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+          {inComparison ? 'Added' : 'Compare'}
+        </button>
       )}
 
       <div className="flex items-start justify-between mb-3">
@@ -354,10 +366,120 @@ function buildPrintHTML({ s, clientProfile, paidDebts, remainingDebts, activeStr
 </html>`;
 }
 
+// Interest paid over the first `months` of a loan (amortization sum).
+function interestOverMonths(principal, annualRatePct, termYears, months) {
+  const P = parseFloat(principal) || 0;
+  const r = (parseFloat(annualRatePct) || 0) / 100 / 12;
+  const n = Math.round((parseFloat(termYears) || 30) * 12);
+  if (P <= 0 || n <= 0) return 0;
+  const pmt = r === 0 ? P / n : P * r / (1 - Math.pow(1 + r, -n));
+  let bal = P, interest = 0;
+  const cap = Math.min(months, n);
+  for (let m = 0; m < cap; m++) {
+    const i = bal * r;
+    interest += i;
+    bal -= (pmt - i);
+    if (bal < 0) bal = 0;
+  }
+  return Math.round(interest);
+}
+
+// Option A interest saved: rate-reduction on the SAME current balance over the new
+// term — isolates the value of the lower rate (always >= 0 when new rate < old).
+function interestSaved(clientProfile, scenario, months) {
+  const bal = parseFloat(clientProfile.currentBalance) || 0;
+  const oldRate = parseFloat(clientProfile.currentRate) || 0;
+  const term = scenario.termYears || 30;
+  const oldI = interestOverMonths(bal, oldRate, term, months);
+  const newI = interestOverMonths(bal, scenario.rate, term, months);
+  return Math.max(0, oldI - newI);
+}
+
+// Build the client-facing comparison one-sheet. CLIENT-FACING ONLY — no margin,
+// no LLPA, no internal pricing ever. `options` is up to 3 scenarios.
+function buildComparisonHTML({ options, clientProfile, currentTotalPayment, currentMortgagePI, debtPaymentTotal, recommendedKey, companyName, today }) {
+  const money = v => '$' + Math.round(Math.abs(v || 0)).toLocaleString();
+  const escrow = parseFloat(clientProfile.escrow) || 0;
+  const oldRate = parseFloat(clientProfile.currentRate) || 0;
+  const debtMo = parseFloat(debtPaymentTotal) || 0;
+
+  // Current loan column
+  const curTotal = currentMortgagePI + escrow; // housing only
+  const curOblig = currentTotalPayment;        // housing + debts being eliminated
+
+  const col = (label, cells, opts = {}) => {
+    const { bold, head, hi } = opts;
+    const tds = cells.map((c, i) => {
+      const isCur = i === 0;
+      const bg = head ? '' : (hi ? 'background:#e6f1fb;' : (isCur ? 'background:#f6f5f0;' : ''));
+      const color = c.green ? 'color:#0f6e56;font-weight:500;' : (hi ? 'color:#185fa5;font-weight:500;' : '');
+      return `<td style="text-align:center;padding:7px 6px;border-left:0.5px solid #e5e7eb;${bg}${color}font-size:${head?'12px':'12.5px'};${head?'font-weight:500;':''}">${c.v}</td>`;
+    }).join('');
+    const lblBg = hi ? 'background:#e6f1fb;font-weight:500;' : (bold ? 'font-weight:500;' : '');
+    const indent = opts.indent ? 'padding-left:20px;' : '';
+    return `<tr><td style="padding:7px 12px;${indent}font-size:12px;color:#4b5563;${lblBg}">${label}</td>${tds}</tr>`;
+  };
+
+  const headCells = [{ v: 'Paying Now' }, ...options.map(o => ({ v: o.strategyLabel || o.program }))];
+  const subCells = [{ v: 'Current loan' }, ...options.map(o => ({ v: `${o.program}${o.isARM ? ' ' + (o.armType || 'ARM') : ''}` }))];
+
+  const rows = [
+    col('Interest rate', [{ v: oldRate.toFixed(3) + '%' }, ...options.map(o => ({ v: o.rate.toFixed(3) + '%' }))], { bold: true }),
+    col('Principal &amp; interest', [{ v: money(currentMortgagePI) }, ...options.map(o => ({ v: money(o.newPI) }))], { indent: true }),
+    col('Mortgage insurance', [{ v: '—' }, ...options.map(o => ({ v: (o.monthlyMIP + o.monthlyMI) > 0 ? money(o.monthlyMIP + o.monthlyMI) : '—' }))], { indent: true }),
+    col('Escrow (taxes + insurance)', [{ v: money(escrow) }, ...options.map(() => ({ v: money(escrow) }))], { indent: true }),
+    col('Total monthly payment', [{ v: money(curTotal) }, ...options.map(o => ({ v: money(o.newPI + (o.monthlyInsurance || 0) + escrow) }))], { hi: true }),
+    col('+ debts paid monthly', [{ v: money(debtMo) }, ...options.map(() => ({ v: 'paid off' }))]),
+    col('Total monthly obligations', [{ v: money(curOblig) }, ...options.map(o => ({ v: money(o.newPI + (o.monthlyInsurance || 0) + escrow) }))], { bold: true }),
+    col('Monthly savings', [{ v: '—' }, ...options.map(o => ({ v: '+' + money(o.monthlySavings), green: true }))]),
+    col('Interest saved — 5 years', [{ v: '—' }, ...options.map(o => ({ v: money(interestSaved(clientProfile, o, 60)), green: true }))]),
+    col('Interest saved — life of loan', [{ v: '—' }, ...options.map(o => ({ v: money(interestSaved(clientProfile, o, o.termYears * 12)), green: true }))]),
+    col('Debt paid off at closing', [{ v: '—' }, ...options.map(o => ({ v: o.debtBalanceTotal > 0 ? money(o.debtBalanceTotal) : '—' }))]),
+    col('Points / cost', [{ v: '—' }, ...options.map(o => ({ v: o.borrowerPaysPct > 0 ? money(o.pointsCost) : '$0' }))]),
+    col('Cash to client', [{ v: '—' }, ...options.map(o => ({ v: o.cashOut > 0 ? money(Math.max(0, o.cashOut - (o.netClosingCosts || 0))) : '—' }))]),
+  ].join('');
+
+  const headRow = `<tr>
+    <th style="padding:8px 12px;border-bottom:0.5px solid #d1d5db;"></th>
+    ${headCells.map((c, i) => `<th style="padding:8px 6px;border-bottom:0.5px solid #d1d5db;border-left:0.5px solid #e5e7eb;${i===0?'background:#f6f5f0;':''}${i>0 && options[i-1] && recommendedKey===options[i-1]._key?'border-top:2px solid #378add;':''}font-size:12px;font-weight:500;${i>0 && options[i-1] && recommendedKey===options[i-1]._key?'color:#185fa5;':''}">${c.v}<div style="font-size:10px;color:#9ca3af;font-weight:400;">${subCells[i].v}</div></th>`).join('')}
+  </tr>`;
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Refinance Options — ${clientProfile.borrowerName || 'Client'}</title>
+  <style>
+    @page { size: letter landscape; margin: 0.4in; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-sizing: border-box; }
+    body { font-family: -apple-system, Arial, sans-serif; margin: 0; color: #111827; }
+    table { width: 100%; border-collapse: collapse; }
+  </style></head><body>
+    <div style="background:#15293f;color:#fff;padding:14px 18px;border-radius:8px 8px 0 0;">
+      <div style="font-size:10px;letter-spacing:.08em;color:#9db8d6;">${(companyName || 'PRIORITY 1 LENDING').toUpperCase()} · REFINANCE OPTIONS</div>
+      <div style="font-size:18px;font-weight:600;margin-top:2px;">Prepared for ${clientProfile.borrowerName || 'Client'}</div>
+      <div style="font-size:11px;color:#9db8d6;margin-top:2px;">${options[0]?.goal === 'cash_out' ? 'Cash-out refinance' : 'Rate &amp; term refinance'} · ${today}</div>
+    </div>
+    <div style="border:0.5px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
+      <table>${headRow}${rows}</table>
+    </div>
+    <div style="font-size:9px;color:#9ca3af;margin-top:8px;line-height:1.5;">
+      Illustrative only. "Total monthly obligations" includes debts being paid off at closing. Interest savings reflect the rate reduction on the current balance and depend on time held and prepayment. Taxes and insurance are estimates. Final terms subject to underwriting approval. Prepared by ${companyName || 'Priority 1 Lending'}.
+    </div>
+  </body></html>`;
+}
+
 export default function AnalysisReport({ result, clientProfile, selectedDebts, marginBPS, marginDollar, lenderFees = 0, pricingStrategies = [], userRole = 'lo', companyName = 'Priority 1 Lending' }) {
   const isAdmin = userRole === 'admin';
   const [activeScenario, setActiveScenario] = useState(result.recommended);
   const [viewMode, setViewMode] = useState('compact');  // 'compact' (collapsed sections) | 'full'
+  const [compareKeys, setCompareKeys] = useState([]);    // scenario keys selected for the client comparison sheet
+
+  const scenarioKey = (sc) => `${sc.program}|${sc.goal}|${sc.isARM ? sc.armType || 'ARM' : 'fixed'}|${sc.rate}|${sc.strategyTag || ''}`;
+  const toggleCompare = (sc) => {
+    const k = scenarioKey(sc);
+    setCompareKeys(prev => {
+      if (prev.includes(k)) return prev.filter(x => x !== k);
+      if (prev.length >= 3) return prev; // cap at 3
+      return [...prev, k];
+    });
+  };
   const [activeGoalTab, setActiveGoalTab] = useState(result.recommended?.goal || 'rate_term');
   const [productTab, setProductTab] = useState(result.recommended?.isARM ? 'arm' : 'fixed');
   const [activeStrategy, setActiveStrategy] = useState(
@@ -391,6 +513,27 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
   const armScenarios = visibleScenarios.filter(sc => sc.isARM);
 
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  // Scenarios selected for the comparison sheet (preserve selection order, cap 3).
+  const compareOptions = compareKeys
+    .map(k => (scenarios || []).find(sc => scenarioKey(sc) === k))
+    .filter(Boolean)
+    .slice(0, 3)
+    .map(sc => ({ ...sc, _key: scenarioKey(sc) }));
+
+  const handlePrintComparison = () => {
+    if (compareOptions.length < 1) return;
+    const recKey = recommended ? scenarioKey(recommended) : null;
+    const html = buildComparisonHTML({
+      options: compareOptions, clientProfile,
+      currentTotalPayment, currentMortgagePI, debtPaymentTotal,
+      recommendedKey: recKey, companyName, today,
+    });
+    const w = window.open('', '_blank');
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => { w.print(); }, 600);
+  };
 
   const handlePrint = () => {
     const s = activeScenario || result.recommended;
@@ -474,7 +617,20 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
           <Printer className="w-4 h-4" />
           Print / Save PDF
         </button>
+        <button onClick={handlePrintComparison} disabled={compareOptions.length < 1}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl transition-colors shadow-sm no-print ${
+            compareOptions.length < 1 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'
+          }`}
+          title={compareOptions.length < 1 ? 'Tick “Compare” on up to 3 option cards first' : 'Print the client comparison sheet'}>
+          <LayoutList className="w-4 h-4" />
+          Print Comparison{compareOptions.length > 0 ? ` (${compareOptions.length})` : ''}
+        </button>
       </div>
+      {compareOptions.length > 0 && (
+        <div className="text-xs text-gray-500 text-right -mt-3 no-print">
+          {compareOptions.length} option{compareOptions.length > 1 ? 's' : ''} selected for the client sheet{compareKeys.length >= 3 ? ' (max reached)' : ''} · tick “Compare” on cards to add
+        </div>
+      )}
 
       {/* Goal tabs */}
       {goalTabs.length > 1 && (
@@ -541,14 +697,14 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
         {productTab === 'fixed' && (
           fixedScenarios.length > 0
             ? <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {fixedScenarios.map((sc, i) => <ScenarioCard key={i} scenario={sc} isRecommended={isCardRecommended(sc)} isSelected={isCardSelected(sc)} onSelect={setActiveScenario} />)}
+                {fixedScenarios.map((sc, i) => <ScenarioCard key={i} scenario={sc} isRecommended={isCardRecommended(sc)} isSelected={isCardSelected(sc)} onSelect={setActiveScenario} inComparison={compareKeys.includes(scenarioKey(sc))} onToggleCompare={toggleCompare} />)}
               </div>
             : <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-amber-700 text-sm text-center">No 30-year fixed options available for this strategy. Try another strategy tab above or check ARM options.</div>
         )}
         {productTab === 'arm' && (
           armScenarios.length > 0
             ? <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {armScenarios.map((sc, i) => <ScenarioCard key={i} scenario={sc} isRecommended={isCardRecommended(sc)} isSelected={isCardSelected(sc)} onSelect={setActiveScenario} />)}
+                {armScenarios.map((sc, i) => <ScenarioCard key={i} scenario={sc} isRecommended={isCardRecommended(sc)} isSelected={isCardSelected(sc)} onSelect={setActiveScenario} inComparison={compareKeys.includes(scenarioKey(sc))} onToggleCompare={toggleCompare} />)}
               </div>
             : <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-gray-400 text-sm text-center">No ARM options available.</div>
         )}
