@@ -12,23 +12,32 @@
 const BASE = process.env.SILKTITLE_BASE || 'https://api.uats.silktitleco.com';
 
 // Pull the total title + settlement charge out of SilkTitle's quote response.
-// The exact shape is confirmed from a "Try it out" response; until then this
-// reads the most likely fields and falls back to summing line items. If it
-// can't find a defensible total, it returns null so the UI leaves the field
-// for manual entry rather than inserting a wrong number.
+// Confirmed shape: { premium: { lender, owner }, fees: [ { amount, description,
+// mismoType, hudLine, ... } ], notes }. Amounts come back as strings. The total
+// the borrower owes = lender premium + owner premium + sum of all fee amounts.
+// Returns null if the shape is unrecognized so the UI leaves the field manual.
+function num(v) { const n = parseFloat(String(v ?? '').replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; }
+
 function extractTotal(quote) {
   if (!quote || typeof quote !== 'object') return null;
-  // 1) An explicit total, if SilkTitle provides one.
-  const direct = quote.total ?? quote.totalFees ?? quote.grandTotal
-    ?? quote.costs?.total ?? quote.summary?.total;
-  if (typeof direct === 'number' && direct > 0) return Math.round(direct);
-  // 2) Otherwise sum the line-item costs (title + recording + insurance).
-  const lines = quote.costs || quote.fees || quote.lineItems || quote.items;
-  if (Array.isArray(lines) && lines.length) {
-    const sum = lines.reduce((s, x) => s + (Number(x.amount ?? x.cost ?? x.fee ?? x.value) || 0), 0);
-    if (sum > 0) return Math.round(sum);
+  let total = 0, found = false;
+  // Title insurance premiums
+  if (quote.premium && typeof quote.premium === 'object') {
+    total += num(quote.premium.lender) + num(quote.premium.owner);
+    found = true;
   }
-  return null; // unknown shape — caller leaves the field manual
+  // Settlement / recording / title fee line items
+  if (Array.isArray(quote.fees)) {
+    for (const f of quote.fees) { total += num(f.amount); }
+    found = found || quote.fees.length > 0;
+  }
+  // Fallback: an explicit total field, if the shape ever changes
+  if (!found) {
+    const direct = quote.total ?? quote.totalFees ?? quote.grandTotal ?? quote.summary?.total;
+    if (typeof direct === 'number' && direct > 0) return Math.round(direct);
+    return null;
+  }
+  return total > 0 ? Math.round(total) : null;
 }
 
 export default async function handler(req, res) {
