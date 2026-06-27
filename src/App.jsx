@@ -704,7 +704,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
           {rateSheetStatus === 'success' && parsedRateSheet && (
             <div className="flex items-center gap-1.5 bg-green-500/15 border border-green-400/20 rounded-lg px-2.5 py-1.5 text-[11px] text-green-300">
               <span>📊</span>
-              <span className="truncate">{parsedRateSheet.effective_date || parsedRateSheet.effectiveDate || 'Rate sheet'} · {parsedRateSheet.programs?.length} programs</span>
+              <span className="truncate">Rates active</span>
             </div>
           )}
           {crmBadge && (
@@ -771,23 +771,19 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                 )}
               </div>
               <div>
-                <p className="text-sm font-semibold text-gray-700 mb-2">Rate Sheet</p>
+                <p className="text-sm font-semibold text-gray-700 mb-2">Pricing</p>
                 {parsedRateSheet ? (
-                  <div className="border-2 border-green-300 bg-green-50 rounded-xl p-4 flex items-center gap-3">
-                    <div className="text-2xl">📊</div>
+                  <div className="border border-green-200 bg-green-50 rounded-xl p-4 flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center text-green-700 text-lg">✓</div>
                     <div>
-                      <div className="font-semibold text-green-800 text-sm">Rate Sheet Active</div>
-                      <div className="text-green-700 text-xs mt-0.5">
-                        Effective: {parsedRateSheet.effective_date || parsedRateSheet.effectiveDate || 'Current'} · {parsedRateSheet.programs?.length} programs loaded
-                      </div>
-                      <div className="text-green-600 text-xs mt-0.5">{parsedRateSheet.programs?.map(p => p.type).join(' · ')}</div>
-                      <div className="text-green-500 text-xs mt-1 italic">Managed by admin · updates automatically</div>
+                      <div className="font-semibold text-green-800 text-sm">Rates active</div>
+                      <div className="text-green-600 text-xs mt-0.5">Current pricing loaded · managed by admin</div>
                     </div>
                   </div>
                 ) : (
-                  <div className="border-2 border-amber-300 bg-amber-50 rounded-xl p-4">
-                    <div className="font-semibold text-amber-800 text-sm">⚠️ No rate sheet loaded</div>
-                    <div className="text-amber-700 text-xs mt-1">Ask your admin to upload the current UWM rate sheet. You can still enter a manual rate in Step 2.</div>
+                  <div className="border border-amber-300 bg-amber-50 rounded-xl p-4">
+                    <div className="font-semibold text-amber-800 text-sm">⚠️ No rates loaded</div>
+                    <div className="text-amber-700 text-xs mt-1">Ask your admin to load current pricing. You can still enter a manual rate in Step 2.</div>
                   </div>
                 )}
               </div>
