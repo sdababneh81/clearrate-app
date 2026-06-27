@@ -26,14 +26,19 @@
  * }
  */
 
-function findBand(bands, fico) {
-  if (!Array.isArray(bands) || fico == null) return null;
-  let b = bands.find(x => fico >= (x.min ?? -Infinity) && fico <= (x.max ?? Infinity));
-  if (!b) {
-    const sorted = [...bands].sort((a, c) => (a.min ?? 0) - (c.min ?? 0));
-    b = fico < (sorted[0].min ?? 0) ? sorted[0] : sorted[sorted.length - 1]; // clamp
-  }
-  return b;
+function findBand(bands, fico, exactOnly = false) {
+  if (!Array.isArray(bands) || !bands.length || fico == null) return null;
+  const exact = bands.find(x => fico >= (x.min ?? -Infinity) && fico <= (x.max ?? Infinity));
+  if (exact) return exact;
+  if (exactOnly) return null; // no clamping — a missing band means "no adjustment"
+  const sorted = [...bands].sort((a, c) => (a.min ?? 0) - (c.min ?? 0));
+  if (fico < (sorted[0].min ?? 0)) return sorted[0];                          // below all → lowest band
+  if (fico > (sorted[sorted.length - 1].max ?? Infinity)) return sorted[sorted.length - 1]; // above all → top band
+  // FICO falls in a GAP between bands (missing band): pick the nearest band BELOW
+  // the score — the more conservative (higher-cost) one — never jump up to a credit.
+  let chosen = sorted[0];
+  for (const b of sorted) { if ((b.min ?? 0) <= fico) chosen = b; }
+  return chosen;
 }
 
 // Map an LTV to the column index, given the ordered upper-bound bands.
@@ -69,7 +74,7 @@ export function applyLLPA(grid, borrower) {
 
   if (isGov && grid.government) {
     // ── VA / FHA: flat FICO adjustor ────────────────────────────────────
-    const band = findBand(grid.government.fico, fico);
+    const band = findBand(grid.government.fico, fico, true); // exact only — never clamp a govt credit
     if (band && parseFloat(band.hit) !== 0 && !isNaN(parseFloat(band.hit))) {
       hits.push({ description: `${lt.toUpperCase()} Credit ${band.min}-${band.max}`, hit: parseFloat(band.hit) });
     }
