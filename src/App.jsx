@@ -341,10 +341,50 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
       if (match.lien1?.interestRate && !profile.currentRate) {
         setP('currentRate', String(match.lien1.interestRate));
       }
+      // Chain a SilkTitle title-fee quote using the property + loan data we now have.
+      pullTitleFees(match);
     } catch (e) {
       console.log('Property lookup failed:', e.message);
       setPropertyLookupStatus('notfound');
       setLookupError(`Connection error: ${e.message}. (Likely CORS — the API may not allow calls from this domain.)`);
+    }
+  };
+
+  const [titleFeeStatus, setTitleFeeStatus] = useState('idle'); // idle | loading | found | failed
+  const pullTitleFees = async (match) => {
+    if (profile.titleCharges) return; // don't overwrite a manual entry
+    setTitleFeeStatus('loading');
+    try {
+      const prop = match?.property || {};
+      const lien = match?.lien1 || {};
+      const newLoanAmount = (parseFloat(profile.currentBalance) || lien.principalOutstanding || 0)
+        + (parseFloat(profile.cashOutAmount) || 0);
+      const body = {
+        type: 'refinance',
+        loanAmount: Math.round(newLoanAmount) || 0,
+        loanProgram: (isVeteran ? 'va' : 'conventional'),
+        product: 'standard',
+        estimatedPropertyValue: Math.round(parseFloat(profile.estimatedValue) || prop.valueEstimate || 0),
+        estimatedCashOut: parseFloat(profile.cashOutAmount) || null,
+        property: { city: prop.city || '', state: prop.state || '', zipCode: prop.zipcode || prop.zipCode || '', county: prop.county || '' },
+        priorLoan: lien.principalOutstanding ? {
+          policyConsideration: Math.round(lien.amount || lien.principalOutstanding),
+          balance: Math.round(lien.principalOutstanding),
+          originationDate: lien.contractDate || null,
+        } : null,
+        endorsements: [],
+      };
+      const r = await fetch('/api/title-fees', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await r.json();
+      if (r.ok && typeof data.total === 'number' && data.total > 0) {
+        setP('titleCharges', String(data.total));
+        setTitleFeeStatus('found');
+      } else {
+        setTitleFeeStatus('failed'); // leave field for manual entry
+      }
+    } catch (e) {
+      console.log('Title fee pull failed:', e.message);
+      setTitleFeeStatus('failed');
     }
   };
 
@@ -902,8 +942,8 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
             {/* New Loan Costs */}
             <Card title="New Loan — Charges">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                <Field label="Title & Settlement Charges" hint="Your title company fees — rolled into new loan">
-                  <input className={inpHighlight} type="number" value={profile.titleCharges} onChange={e => setP('titleCharges', e.target.value)} placeholder="e.g. 3500" />
+                <Field label="Title & Settlement Charges" hint={titleFeeStatus === 'loading' ? '🔍 Pulling from SilkTitle...' : titleFeeStatus === 'found' ? '✅ Auto-filled from SilkTitle' : titleFeeStatus === 'failed' ? '⚠️ Couldn\'t auto-pull — enter manually' : 'Auto-fills from SilkTitle after address lookup'}>
+                  <input className={profile.titleCharges ? inp : inpHighlight} type="number" value={profile.titleCharges} onChange={e => setP('titleCharges', e.target.value)} placeholder="e.g. 3500" />
                 </Field>
                 <Field label="Lender Fees (Processing + Underwriting)" hint="Total of lender's processing and underwriting fees">
                   <input className={inp} type="number" value={lenderFees} onChange={e => setLenderFees(e.target.value)} placeholder="e.g. 1495" />
