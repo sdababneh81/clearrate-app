@@ -44,7 +44,7 @@ function ScenarioCard({ scenario: sc, isRecommended, isSelected, onSelect, inCom
     <div
       className={`border-2 rounded-xl p-4 cursor-pointer transition-all relative ${
         isSelected ? 'border-blue-500 bg-blue-50 shadow-md' : 'border-gray-200 bg-white hover:border-blue-300'
-      } ${isRecommended ? 'ring-2 ring-green-400 ring-offset-1' : ''}`}
+      } ${isRecommended ? 'ring-2 ring-green-400 ring-offset-1 mt-3 pt-5' : ''}`}
       onClick={() => onSelect(sc)}
     >
       {isRecommended && (
@@ -656,13 +656,23 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
               const colorMap = { blue: 'border-blue-500 bg-blue-50', purple: 'border-purple-500 bg-purple-50', green: 'border-green-500 bg-green-50', amber: 'border-amber-500 bg-amber-50' };
               const activeColor = colorMap[meta.color] || 'border-blue-500 bg-blue-50';
               return (
-                <button key={sr.strategy}
-                  onClick={() => { setActiveStrategy(sr.strategy); setActiveScenario(sr.recommended); }}
-                  className={`flex-1 min-w-[160px] text-left p-3 rounded-xl border-2 transition-all ${isActive ? activeColor : 'border-gray-200 hover:border-gray-300 bg-white'}`}>
+                <div key={sr.strategy}
+                  className={`relative flex-1 min-w-[160px] text-left p-3 rounded-xl border-2 transition-all cursor-pointer ${isActive ? activeColor : 'border-gray-200 hover:border-gray-300 bg-white'}`}
+                  onClick={() => { setActiveStrategy(sr.strategy); setActiveScenario(sr.recommended); }}>
+                  {rec && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleCompare(rec); }}
+                      className={`absolute top-1.5 right-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold border transition-colors no-print ${
+                        compareKeys.includes(scenarioKey(rec)) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-400 hover:border-blue-400 hover:text-blue-600'
+                      }`}
+                      title="Add this option to the client comparison sheet">
+                      {compareKeys.includes(scenarioKey(rec)) ? <CheckCircle className="w-2.5 h-2.5" /> : <Plus className="w-2.5 h-2.5" />}
+                      {compareKeys.includes(scenarioKey(rec)) ? 'Added' : 'Compare'}
+                    </button>
+                  )}
                   <div className="flex items-center gap-2 mb-2">
                     <span className="text-xl">{meta.icon}</span>
                     <span className={`text-xs font-bold ${isActive ? 'text-gray-800' : 'text-gray-500'}`}>{meta.label}</span>
-                    {isActive && <span className="ml-auto w-2 h-2 rounded-full bg-blue-500"></span>}
                   </div>
                   {rec ? (
                     <>
@@ -674,7 +684,7 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
                       {rec.efficiencyLabel && <div className="text-xs mt-1 text-gray-500">{rec.efficiencyLabel}</div>}
                     </>
                   ) : <div className="text-xs text-gray-400">No rate found</div>}
-                </button>
+                </div>
               );
             })}
           </div>
