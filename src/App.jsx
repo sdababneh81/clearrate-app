@@ -310,7 +310,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
       });
       const data = await res.json();
       const match = data?.matches?.[0];
-      if (!match) return;
+      if (!match) { setPropertyLookupStatus('notfound'); return; }
 
       // Auto-fill estimated value
       if (match.property?.valueEstimate) {
@@ -813,7 +813,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                 </Field>
 
                 <Field label="Current Interest Rate (%) *">
-                  <input className={inpHighlight} type="number" step="0.001" value={profile.currentRate} onChange={e => setP('currentRate', e.target.value)} placeholder="3.750" />
+                  <input className={profile.currentRate ? inp : inpHighlight} type="number" step="0.001" value={profile.currentRate} onChange={e => setP('currentRate', e.target.value)} placeholder="3.750" />
                 </Field>
                 <Field label="Remaining Term (years) *" hint={calculatedTerm ? `Calculated from payment: ${calculatedTerm} yrs` : 'From credit report'}>
                   <input className={inp} type="number" step="0.5" value={profile.currentTermRemaining} onChange={e => setP('currentTermRemaining', e.target.value)} placeholder="21" />
@@ -859,8 +859,20 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                 <Field label="FICO Score" hint="Middle score from credit report">
                   <input className={inp} type="number" value={profile.ficoScore} onChange={e => setP('ficoScore', e.target.value)} placeholder="680" />
                 </Field>
-                <Field label="Estimated Property Value *" hint={propertyLookupStatus === 'loading' ? '🔍 Looking up via P1 API...' : propertyLookupStatus === 'found' ? '✅ Auto-filled from P1 property lookup' : propertyLookupStatus === 'notfound' ? '⚠️ Not found — enter manually' : ''}>
-                  <input className={inp} type="number" value={profile.estimatedValue} onChange={e => setP('estimatedValue', e.target.value)} placeholder="450000" />
+                <Field label="Property Address" hint="Enter to auto-pull the value from HouseCanary">
+                  <div className="flex gap-2">
+                    <input className={inp} value={profile.propertyAddress} onChange={e => setP('propertyAddress', e.target.value)}
+                      onBlur={e => { if (e.target.value && !profile.estimatedValue) lookupProperty(e.target.value); }}
+                      placeholder="2118 Nevada St, Nevada, TX 75173" />
+                    <button type="button" onClick={() => lookupProperty(profile.propertyAddress)}
+                      className="px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold whitespace-nowrap disabled:bg-gray-300"
+                      disabled={!profile.propertyAddress || propertyLookupStatus === 'loading'}>
+                      {propertyLookupStatus === 'loading' ? 'Looking…' : 'Look up'}
+                    </button>
+                  </div>
+                </Field>
+                <Field label="Estimated Property Value *" hint={propertyLookupStatus === 'loading' ? '🔍 Looking up via HouseCanary...' : propertyLookupStatus === 'found' ? '✅ Auto-filled from HouseCanary' : propertyLookupStatus === 'notfound' ? '⚠️ Not found — enter manually' : 'Enter an address above to auto-fill'}>
+                  <input className={profile.estimatedValue ? inp : inpHighlight} type="number" value={profile.estimatedValue} onChange={e => setP('estimatedValue', e.target.value)} placeholder="450000" />
                 </Field>
               </div>
             </Card>
