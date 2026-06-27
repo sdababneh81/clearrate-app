@@ -323,7 +323,12 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         setPropertyLookupStatus('notfound'); setLookupError(`Lookup failed: ${detail}`); return;
       }
       const data = await res.json();
-      const match = data?.matches?.[0];
+      // The endpoint returns either { matches: [...] } (documented single shape) or
+      // { results: [{ property, lien1, ... }] } (batch shape) — in practice it returns
+      // the batch shape even for a single lookup. Handle both.
+      const match = data?.matches?.[0]
+        || data?.results?.[0]?.matches?.[0]
+        || (data?.results?.[0]?.property ? data.results[0] : null);
       if (!match) { setPropertyLookupStatus('notfound'); setLookupError('No property match for that address.'); return; }
 
       if (match.property?.valueEstimate) {
