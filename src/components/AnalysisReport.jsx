@@ -54,15 +54,17 @@ function ScenarioCard({ scenario: sc, isRecommended, isSelected, onSelect, inCom
       )}
 
       {onToggleCompare && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggleCompare(sc); }}
-          className={`absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold border transition-colors no-print ${
-            inComparison ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-400 hover:border-blue-400 hover:text-blue-600'
-          }`}
-          title="Add this option to the client comparison sheet">
-          {inComparison ? <CheckCircle className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
-          {inComparison ? 'Added' : 'Compare'}
-        </button>
+        <div className="flex justify-end mb-2 no-print">
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleCompare(sc); }}
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+              inComparison ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-400 hover:border-blue-400 hover:text-blue-600'
+            }`}
+            title="Add this option to the client comparison sheet">
+            {inComparison ? <CheckCircle className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+            {inComparison ? 'Added' : 'Compare'}
+          </button>
+        </div>
       )}
 
       <div className="flex items-start justify-between mb-3">
@@ -469,15 +471,16 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
   const isAdmin = userRole === 'admin';
   const [activeScenario, setActiveScenario] = useState(result.recommended);
   const [viewMode, setViewMode] = useState('compact');  // 'compact' (collapsed sections) | 'full'
-  const [compareKeys, setCompareKeys] = useState([]);    // scenario keys selected for the client comparison sheet
+  const [compareItems, setCompareItems] = useState([]);  // full scenario objects selected for the client sheet
 
   const scenarioKey = (sc) => `${sc.program}|${sc.goal}|${sc.isARM ? sc.armType || 'ARM' : 'fixed'}|${sc.rate}|${sc.strategyTag || ''}`;
+  const compareKeys = compareItems.map(i => i._key);
   const toggleCompare = (sc) => {
     const k = scenarioKey(sc);
-    setCompareKeys(prev => {
-      if (prev.includes(k)) return prev.filter(x => x !== k);
+    setCompareItems(prev => {
+      if (prev.some(i => i._key === k)) return prev.filter(i => i._key !== k);
       if (prev.length >= 3) return prev; // cap at 3
-      return [...prev, k];
+      return [...prev, { ...sc, _key: k }];
     });
   };
   const [activeGoalTab, setActiveGoalTab] = useState(result.recommended?.goal || 'rate_term');
@@ -514,12 +517,8 @@ export default function AnalysisReport({ result, clientProfile, selectedDebts, m
 
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
-  // Scenarios selected for the comparison sheet (preserve selection order, cap 3).
-  const compareOptions = compareKeys
-    .map(k => (scenarios || []).find(sc => scenarioKey(sc) === k))
-    .filter(Boolean)
-    .slice(0, 3)
-    .map(sc => ({ ...sc, _key: scenarioKey(sc) }));
+  // Scenarios selected for the comparison sheet (stored objects, cap 3).
+  const compareOptions = compareItems.slice(0, 3);
 
   const handlePrintComparison = () => {
     if (compareOptions.length < 1) return;
