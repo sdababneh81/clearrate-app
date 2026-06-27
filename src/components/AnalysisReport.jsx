@@ -462,7 +462,6 @@ function buildComparisonHTML({ options, clientProfile, currentTotalPayment, curr
     row('Total savings — life', ['—', ...opt(o => money((o.monthlySavings || 0) * (o.termYears || 30) * 12))], { green: true }),
 
     sectionHdr('Costs'),
-    row('Interest rate', [oldRate.toFixed(3) + '%', ...opt(o => o.rate.toFixed(3) + '%')], { bold: true }),
     row('Points / cost', ['—', ...opt(o => o.borrowerPaysPct > 0 ? money(o.pointsCost) : '$0')]),
     row('Recoup period', ['—', ...opt(o => o.breakevenMonths === 0 ? 'Immediate' : (o.breakevenMonths != null ? o.breakevenMonths + ' mo' : '—'))]),
     row('Cash to client', ['—', ...opt(o => cashToClient(o) > 0 ? money(cashToClient(o)) : '—')]),
@@ -470,13 +469,15 @@ function buildComparisonHTML({ options, clientProfile, currentTotalPayment, curr
   ].join('');
 
   // Header row with the recommended ribbon over the elevated column.
-  const headCells = [`<th style="padding:9px 8px;text-align:center;border-bottom:1px solid #d1d5db;background:${CURBG};"><div style="font-size:12px;font-weight:500;color:#6b7280;">Paying Now</div><div style="font-size:10px;color:#9ca3af;">Current</div></th>`]
+  const termLbl = (o) => o.isARM ? (o.armType || 'ARM') : `${o.termYears || 30}-Year Fixed`;
+  const headCells = [`<th style="padding:9px 8px;text-align:center;border-bottom:1px solid #d1d5db;background:${CURBG};"><div style="font-size:12px;font-weight:500;color:#6b7280;">Paying Now</div><div style="font-size:10px;color:#9ca3af;">Current loan</div><div style="font-size:15px;font-weight:500;color:#374151;margin-top:3px;">${oldRate.toFixed(3)}%</div></th>`]
     .concat(options.map((o, i) => {
       const isRec = i === recIdx;
       const ribbon = isRec ? `<div style="font-size:10px;font-weight:500;color:#fff;background:${BLUE};border-radius:0 0 6px 6px;margin:-6px -8px 5px;padding:3px;">★ RECOMMENDED</div>` : '';
       const edge = isRec ? `border-left:2px solid ${BLUE};border-right:2px solid ${BLUE};` : 'border-left:0.5px solid #e5e7eb;';
       const labelColor = isRec ? BLUE : '#111827';
-      return `<th style="padding:${isRec ? '6px' : '9px'} 8px 9px;text-align:center;border-bottom:1px solid #d1d5db;${edge}">${ribbon}<div style="font-size:12px;font-weight:500;color:${labelColor};">${o.strategyLabel || o.program}</div><div style="font-size:10px;color:#9ca3af;">${o.program}${o.isARM ? ' ' + (o.armType || 'ARM') : ''}</div></th>`;
+      const rateColor = isRec ? BLUE : '#111827';
+      return `<th style="padding:${isRec ? '6px' : '9px'} 8px 9px;text-align:center;border-bottom:1px solid #d1d5db;${edge}">${ribbon}<div style="font-size:12px;font-weight:500;color:${labelColor};">${o.strategyLabel || o.program}</div><div style="font-size:10px;color:#9ca3af;">${o.program} · ${termLbl(o)}</div><div style="font-size:15px;font-weight:500;color:${rateColor};margin-top:3px;">${o.rate.toFixed(3)}%</div></th>`;
     })).join('');
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Refinance Options — ${clientProfile.borrowerName || 'Client'}</title>
