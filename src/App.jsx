@@ -282,25 +282,34 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
   // Rate sheet is now managed by admin via Supabase — no LO upload needed
 
+  const [lookupError, setLookupError] = useState('');
   const lookupProperty = async (address) => {
     if (!address) return;
     setPropertyLookupStatus('loading');
+    setLookupError('');
     try {
-      // Handle formats like "7729 NW 21ST ST, MARGATE, FL 33063"
-      // or "7729 NW 21ST ST MARGATE FL 33063"
+      // Parse "7729 NW 21st St, Margate, FL 33063" (commas) or without commas.
       let streetAddr, city, state, zip;
-      const parts = address.split(',').map(s => s.trim());
+      const parts = address.split(',').map(s => s.trim()).filter(Boolean);
       if (parts.length >= 3) {
         streetAddr = parts[0];
         city = parts[1];
-        const stateZip = parts[2].trim().split(/\s+/);
+        const stateZip = parts[parts.length - 1].split(/\s+/);
         state = stateZip[0];
         zip = stateZip[1] || '';
       } else {
-        // Try to parse without commas using regex
-        const m = address.match(/^(.+?)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+([A-Z]{2})\s+(\d{5})/);
-        if (!m) { setPropertyLookupStatus('notfound'); return; }
+        // No/partial commas: pull a trailing ST ZIP, the word(s) before = city, rest = street.
+        const m = address.trim().match(/^(.*?)\s+([A-Za-z][A-Za-z.\s]+?)\s+([A-Za-z]{2})\s+(\d{5})(?:-\d{4})?$/);
+        if (!m) { setPropertyLookupStatus('notfound'); setLookupError('Could not read the address. Use: Street, City, ST 12345'); return; }
         streetAddr = m[1]; city = m[2]; state = m[3]; zip = m[4];
+      }
+      // Normalize to what the API expects.
+      state = (state || '').toUpperCase().slice(0, 2);
+      zip = (zip || '').replace(/\D/g, '').slice(0, 5);
+      if (!streetAddr || !city || state.length !== 2 || zip.length !== 5) {
+        setPropertyLookupStatus('notfound');
+        setLookupError(`Parsed: "${streetAddr}" / "${city}" / "${state}" / "${zip}" — check format (Street, City, ST 12345)`);
+        return;
       }
 
       const res = await fetch('https://avzxphkomiizcxdaezcv.supabase.co/functions/v1/address-lookup', {
@@ -308,16 +317,20 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ address: streetAddr, city, state, zip })
       });
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try { const ej = await res.json(); detail = ej.error || ej.detail || detail; } catch {}
+        setPropertyLookupStatus('notfound'); setLookupError(`Lookup failed: ${detail}`); return;
+      }
       const data = await res.json();
       const match = data?.matches?.[0];
-      if (!match) { setPropertyLookupStatus('notfound'); return; }
+      if (!match) { setPropertyLookupStatus('notfound'); setLookupError('No property match for that address.'); return; }
 
-      // Auto-fill estimated value
       if (match.property?.valueEstimate) {
         setP('estimatedValue', String(Math.round(match.property.valueEstimate)));
         setPropertyLookupStatus('found');
       } else {
-        setPropertyLookupStatus('notfound');
+        setPropertyLookupStatus('notfound'); setLookupError('Match found but no value estimate available.');
       }
       // Auto-fill current rate from lien1 if not already set
       if (match.lien1?.interestRate && !profile.currentRate) {
@@ -326,6 +339,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
     } catch (e) {
       console.log('Property lookup failed:', e.message);
       setPropertyLookupStatus('notfound');
+      setLookupError(`Connection error: ${e.message}. (Likely CORS — the API may not allow calls from this domain.)`);
     }
   };
 
@@ -867,7 +881,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                     </button>
                   </div>
                 </Field>
-                <Field label="Estimated Property Value *" hint={propertyLookupStatus === 'loading' ? '🔍 Looking up via HouseCanary...' : propertyLookupStatus === 'found' ? '✅ Auto-filled from HouseCanary' : propertyLookupStatus === 'notfound' ? '⚠️ Not found — enter manually' : 'Enter an address above to auto-fill'}>
+                <Field label="Estimated Property Value *" hint={propertyLookupStatus === 'loading' ? '🔍 Looking up via HouseCanary...' : propertyLookupStatus === 'found' ? '✅ Auto-filled from HouseCanary' : lookupError ? '⚠️ ' + lookupError : propertyLookupStatus === 'notfound' ? '⚠️ Not found — enter manually' : 'Enter an address above to auto-fill'}>
                   <input className={profile.estimatedValue ? inp : inpHighlight} type="number" value={profile.estimatedValue} onChange={e => setP('estimatedValue', e.target.value)} placeholder="450000" />
                 </Field>
               </div>
