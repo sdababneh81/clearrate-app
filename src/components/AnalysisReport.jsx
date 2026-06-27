@@ -404,65 +404,107 @@ function buildComparisonHTML({ options, clientProfile, currentTotalPayment, curr
   const escrow = parseFloat(clientProfile.escrow) || 0;
   const oldRate = parseFloat(clientProfile.currentRate) || 0;
   const debtMo = parseFloat(debtPaymentTotal) || 0;
+  const NAVY = '#15293f', TEAL = '#0f6e56', BLUE = '#185fa5', BLUEBG = '#e6f1fb', CURBG = '#f6f5f0';
 
-  // Current loan column
-  const curTotal = currentMortgagePI + escrow; // housing only
-  const curOblig = currentTotalPayment;        // housing + debts being eliminated
+  // Which option is recommended → that column gets the blue elevation.
+  let recIdx = options.findIndex(o => o._key === recommendedKey);
+  if (recIdx < 0) recIdx = 0; // default-highlight the first selected option
 
-  const col = (label, cells, opts = {}) => {
-    const { bold, head, hi } = opts;
-    const tds = cells.map((c, i) => {
-      const isCur = i === 0;
-      const bg = head ? '' : (hi ? 'background:#e6f1fb;' : (isCur ? 'background:#f6f5f0;' : ''));
-      const color = c.green ? 'color:#0f6e56;font-weight:500;' : (hi ? 'color:#185fa5;font-weight:500;' : '');
-      return `<td style="text-align:center;padding:7px 6px;border-left:0.5px solid #e5e7eb;${bg}${color}font-size:${head?'12px':'12.5px'};${head?'font-weight:500;':''}">${c.v}</td>`;
-    }).join('');
-    const lblBg = hi ? 'background:#e6f1fb;font-weight:500;' : (bold ? 'font-weight:500;' : '');
-    const indent = opts.indent ? 'padding-left:20px;' : '';
-    return `<tr><td style="padding:7px 12px;${indent}font-size:12px;color:#4b5563;${lblBg}">${label}</td>${tds}</tr>`;
+  const newTotal = o => o.newPI + (o.monthlyInsurance || 0) + escrow;
+  const cashToClient = o => o.cashOut > 0 ? Math.max(0, o.cashOut - (o.netClosingCosts || 0)) : 0;
+
+  // The savings hero pulls from the recommended (or first) option.
+  const hero = options[recIdx];
+  const heroSave = hero ? hero.monthlySavings : 0;
+  const heroInt5 = hero ? interestSaved(clientProfile, hero, 60) : 0;
+  const heroCash = hero ? cashToClient(hero) : 0;
+
+  // Cell renderer. colIdx 0 = Paying Now; 1..n = options. recIdx+1 is the elevated col.
+  const cell = (colIdx, v, opts = {}) => {
+    const isCur = colIdx === 0;
+    const isRec = colIdx === recIdx + 1;
+    const styles = ['text-align:center', 'padding:5px 8px'];
+    if (isCur) styles.push(`background:${CURBG}`, 'color:#6b7280');
+    if (isRec) styles.push(`border-left:2px solid ${BLUE}`, `border-right:2px solid ${BLUE}`);
+    else styles.push('border-left:0.5px solid #e5e7eb');
+    if (opts.green) styles.push(`color:${TEAL}`, 'font-weight:500');
+    if (opts.bold) styles.push('font-weight:500');
+    if (opts.totalRow) styles.push(`background:${BLUEBG}`, 'font-weight:500');
+    if (opts.totalRow && isRec) styles.push(`color:${BLUE}`, 'font-size:14px');
+    if (opts.recBottom && isRec) styles.push(`border-bottom:2px solid ${BLUE}`);
+    return `<td style="${styles.join(';')}">${v}</td>`;
   };
 
-  const headCells = [{ v: 'Paying Now' }, ...options.map(o => ({ v: o.strategyLabel || o.program }))];
-  const subCells = [{ v: 'Current loan' }, ...options.map(o => ({ v: `${o.program}${o.isARM ? ' ' + (o.armType || 'ARM') : ''}` }))];
+  const row = (label, vals, opts = {}) => {
+    const lblStyle = ['padding:5px 14px 5px 22px', 'color:#4b5563'];
+    if (opts.muted) lblStyle.push('color:#9ca3af', 'font-size:11px');
+    if (opts.bold || opts.totalRow) { lblStyle[1] = opts.totalRow ? `color:${BLUE}` : 'color:#374151'; lblStyle.push('font-weight:500'); }
+    if (opts.totalRow) lblStyle.push(`background:${BLUEBG}`, 'padding:8px 14px');
+    return `<tr>${`<td style="${lblStyle.join(';')}">${label}</td>`}${vals.map((v, i) => cell(i, v, opts)).join('')}</tr>`;
+  };
+
+  const sectionHdr = (title) => `<tr><td colspan="${options.length + 1}" style="padding:8px 14px 3px;font-size:10px;font-weight:500;letter-spacing:.05em;color:#9ca3af;text-transform:uppercase;">${title}</td></tr>`;
+
+  const opt = (fn) => options.map(fn);
 
   const rows = [
-    col('Interest rate', [{ v: oldRate.toFixed(3) + '%' }, ...options.map(o => ({ v: o.rate.toFixed(3) + '%' }))], { bold: true }),
-    col('Principal &amp; interest', [{ v: money(currentMortgagePI) }, ...options.map(o => ({ v: money(o.newPI) }))], { indent: true }),
-    col('Mortgage insurance', [{ v: '—' }, ...options.map(o => ({ v: (o.monthlyMIP + o.monthlyMI) > 0 ? money(o.monthlyMIP + o.monthlyMI) : '—' }))], { indent: true }),
-    col('Escrow (taxes + insurance)', [{ v: money(escrow) }, ...options.map(() => ({ v: money(escrow) }))], { indent: true }),
-    col('Total monthly payment', [{ v: money(curTotal) }, ...options.map(o => ({ v: money(o.newPI + (o.monthlyInsurance || 0) + escrow) }))], { hi: true }),
-    col('+ debts paid monthly', [{ v: money(debtMo) }, ...options.map(() => ({ v: 'paid off' }))]),
-    col('Total monthly obligations', [{ v: money(curOblig) }, ...options.map(o => ({ v: money(o.newPI + (o.monthlyInsurance || 0) + escrow) }))], { bold: true }),
-    col('Monthly savings', [{ v: '—' }, ...options.map(o => ({ v: '+' + money(o.monthlySavings), green: true }))]),
-    col('Interest saved — 5 years', [{ v: '—' }, ...options.map(o => ({ v: money(interestSaved(clientProfile, o, 60)), green: true }))]),
-    col('Interest saved — life of loan', [{ v: '—' }, ...options.map(o => ({ v: money(interestSaved(clientProfile, o, o.termYears * 12)), green: true }))]),
-    col('Debt paid off at closing', [{ v: '—' }, ...options.map(o => ({ v: o.debtBalanceTotal > 0 ? money(o.debtBalanceTotal) : '—' }))]),
-    col('Points / cost', [{ v: '—' }, ...options.map(o => ({ v: o.borrowerPaysPct > 0 ? money(o.pointsCost) : '$0' }))]),
-    col('Cash to client', [{ v: '—' }, ...options.map(o => ({ v: o.cashOut > 0 ? money(Math.max(0, o.cashOut - (o.netClosingCosts || 0))) : '—' }))]),
+    sectionHdr('Monthly payment'),
+    row('Principal &amp; interest', [money(currentMortgagePI), ...opt(o => money(o.newPI))]),
+    row('Mortgage insurance', ['—', ...opt(o => (o.monthlyMIP + o.monthlyMI) > 0 ? money(o.monthlyMIP + o.monthlyMI) : '—')]),
+    row('Escrow (taxes + insurance)', [money(escrow), ...opt(() => money(escrow))]),
+    row('Total payment', [money(currentMortgagePI + escrow), ...opt(o => money(newTotal(o)))], { totalRow: true }),
+    row('+ debts paid monthly', [money(debtMo), ...opt(() => 'paid off')], { muted: true }),
+    row('Total obligations', [money(currentTotalPayment), ...opt(o => money(newTotal(o)))], { bold: true }),
+
+    sectionHdr('Your savings'),
+    row('Monthly savings', ['—', ...opt(o => '+' + money(o.monthlySavings))], { green: true }),
+    row('Interest saved — 5 yrs', ['—', ...opt(o => money(interestSaved(clientProfile, o, 60)))], { green: true }),
+    row('Interest saved — life', ['—', ...opt(o => money(interestSaved(clientProfile, o, o.termYears * 12)))], { green: true }),
+
+    sectionHdr('Costs'),
+    row('Interest rate', [oldRate.toFixed(3) + '%', ...opt(o => o.rate.toFixed(3) + '%')], { bold: true }),
+    row('Points / cost', ['—', ...opt(o => o.borrowerPaysPct > 0 ? money(o.pointsCost) : '$0')]),
+    row('Recoup period', ['—', ...opt(o => o.breakevenMonths === 0 ? 'Immediate' : (o.breakevenMonths != null ? o.breakevenMonths + ' mo' : '—'))]),
+    row('Cash to client', ['—', ...opt(o => cashToClient(o) > 0 ? money(cashToClient(o)) : '—')]),
+    row('Debt paid off at closing', ['—', ...opt(o => o.debtBalanceTotal > 0 ? money(o.debtBalanceTotal) : '—')], { recBottom: true }),
   ].join('');
 
-  const headRow = `<tr>
-    <th style="padding:8px 12px;border-bottom:0.5px solid #d1d5db;"></th>
-    ${headCells.map((c, i) => `<th style="padding:8px 6px;border-bottom:0.5px solid #d1d5db;border-left:0.5px solid #e5e7eb;${i===0?'background:#f6f5f0;':''}${i>0 && options[i-1] && recommendedKey===options[i-1]._key?'border-top:2px solid #378add;':''}font-size:12px;font-weight:500;${i>0 && options[i-1] && recommendedKey===options[i-1]._key?'color:#185fa5;':''}">${c.v}<div style="font-size:10px;color:#9ca3af;font-weight:400;">${subCells[i].v}</div></th>`).join('')}
-  </tr>`;
+  // Header row with the recommended ribbon over the elevated column.
+  const headCells = [`<th style="padding:9px 8px;text-align:center;border-bottom:1px solid #d1d5db;background:${CURBG};"><div style="font-size:12px;font-weight:500;color:#6b7280;">Paying Now</div><div style="font-size:10px;color:#9ca3af;">Current</div></th>`]
+    .concat(options.map((o, i) => {
+      const isRec = i === recIdx;
+      const ribbon = isRec ? `<div style="font-size:10px;font-weight:500;color:#fff;background:${BLUE};border-radius:0 0 6px 6px;margin:-6px -8px 5px;padding:3px;">★ RECOMMENDED</div>` : '';
+      const edge = isRec ? `border-left:2px solid ${BLUE};border-right:2px solid ${BLUE};` : 'border-left:0.5px solid #e5e7eb;';
+      const labelColor = isRec ? BLUE : '#111827';
+      return `<th style="padding:${isRec ? '6px' : '9px'} 8px 9px;text-align:center;border-bottom:1px solid #d1d5db;${edge}">${ribbon}<div style="font-size:12px;font-weight:500;color:${labelColor};">${o.strategyLabel || o.program}</div><div style="font-size:10px;color:#9ca3af;">${o.program}${o.isARM ? ' ' + (o.armType || 'ARM') : ''}</div></th>`;
+    })).join('');
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Refinance Options — ${clientProfile.borrowerName || 'Client'}</title>
   <style>
     @page { size: letter landscape; margin: 0.4in; }
-    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-sizing: border-box; }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; box-sizing: border-box; }
     body { font-family: -apple-system, Arial, sans-serif; margin: 0; color: #111827; }
-    table { width: 100%; border-collapse: collapse; }
+    table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   </style></head><body>
-    <div style="background:#15293f;color:#fff;padding:14px 18px;border-radius:8px 8px 0 0;">
-      <div style="font-size:10px;letter-spacing:.08em;color:#9db8d6;">${(companyName || 'PRIORITY 1 LENDING').toUpperCase()} · REFINANCE OPTIONS</div>
-      <div style="font-size:18px;font-weight:600;margin-top:2px;">Prepared for ${clientProfile.borrowerName || 'Client'}</div>
-      <div style="font-size:11px;color:#9db8d6;margin-top:2px;">${options[0]?.goal === 'cash_out' ? 'Cash-out refinance' : 'Rate &amp; term refinance'} · ${today}</div>
-    </div>
-    <div style="border:0.5px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
-      <table>${headRow}${rows}</table>
+    <div style="border:0.5px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+      <div style="background:${NAVY};padding:16px 18px;">
+        <div style="font-size:11px;letter-spacing:.08em;color:#9db8d6;">${(companyName || 'PRIORITY 1 LENDING').toUpperCase()} · REFINANCE OPTIONS</div>
+        <div style="font-size:19px;font-weight:500;color:#fff;margin-top:3px;">Prepared for ${clientProfile.borrowerName || 'Client'}</div>
+        <div style="font-size:12px;color:#9db8d6;margin-top:2px;">${options[0]?.goal === 'cash_out' ? 'Cash-out refinance' : 'Rate &amp; term refinance'} · ${today}</div>
+      </div>
+      <div style="background:${TEAL};padding:11px 18px;display:flex;gap:28px;align-items:center;">
+        <div><div style="font-size:11px;color:#9fe1cb;">RECOMMENDED MONTHLY SAVINGS</div><div style="font-size:18px;font-weight:500;color:#fff;">${heroSave > 0 ? '+' + money(heroSave) : money(heroSave)}/mo</div></div>
+        <div style="width:0.5px;height:30px;background:rgba(255,255,255,.2);"></div>
+        <div><div style="font-size:11px;color:#9fe1cb;">5-YEAR INTEREST SAVED</div><div style="font-size:18px;font-weight:500;color:#fff;">${money(heroInt5)}</div></div>
+        ${heroCash > 0 ? `<div style="width:0.5px;height:30px;background:rgba(255,255,255,.2);"></div><div><div style="font-size:11px;color:#9fe1cb;">CASH TO CLIENT</div><div style="font-size:18px;font-weight:500;color:#fff;">${money(heroCash)}</div></div>` : ''}
+      </div>
+      <table>
+        <tr><td style="padding:9px 14px;border-bottom:1px solid #d1d5db;"></td>${headCells}</tr>
+        ${rows}
+      </table>
     </div>
     <div style="font-size:9px;color:#9ca3af;margin-top:8px;line-height:1.5;">
-      Illustrative only. "Total monthly obligations" includes debts being paid off at closing. Interest savings reflect the rate reduction on the current balance and depend on time held and prepayment. Taxes and insurance are estimates. Final terms subject to underwriting approval. Prepared by ${companyName || 'Priority 1 Lending'}.
+      Illustrative only. Total obligations includes debts paid off at closing. Interest savings reflect the rate reduction on the current balance and depend on time held and prepayment. Taxes and insurance are estimates. Final terms subject to underwriting approval. Prepared by ${companyName || 'Priority 1 Lending'}.
     </div>
   </body></html>`;
 }
