@@ -416,7 +416,7 @@ function buildComparisonHTML({ options, clientProfile, currentTotalPayment, curr
   // The savings hero pulls from the recommended (or first) option.
   const hero = options[recIdx];
   const heroSave = hero ? hero.monthlySavings : 0;
-  const heroInt5 = hero ? interestSaved(clientProfile, hero, 60) : 0;
+  const heroInt5 = hero ? (hero.monthlySavings || 0) * 60 : 0;
   const heroCash = hero ? cashToClient(hero) : 0;
 
   // Cell renderer. colIdx 0 = Paying Now; 1..n = options. recIdx+1 is the elevated col.
@@ -458,8 +458,8 @@ function buildComparisonHTML({ options, clientProfile, currentTotalPayment, curr
 
     sectionHdr('Your savings'),
     row('Monthly savings', ['—', ...opt(o => '+' + money(o.monthlySavings))], { green: true }),
-    row('Interest saved — 5 yrs', ['—', ...opt(o => money(interestSaved(clientProfile, o, 60)))], { green: true }),
-    row('Interest saved — life', ['—', ...opt(o => money(interestSaved(clientProfile, o, o.termYears * 12)))], { green: true }),
+    row('Total savings — 5 yrs', ['—', ...opt(o => money((o.monthlySavings || 0) * 60))], { green: true }),
+    row('Total savings — life', ['—', ...opt(o => money((o.monthlySavings || 0) * (o.termYears || 30) * 12))], { green: true }),
 
     sectionHdr('Costs'),
     row('Interest rate', [oldRate.toFixed(3) + '%', ...opt(o => o.rate.toFixed(3) + '%')], { bold: true }),
@@ -495,7 +495,7 @@ function buildComparisonHTML({ options, clientProfile, currentTotalPayment, curr
       <div style="background:${TEAL};padding:11px 18px;display:flex;gap:28px;align-items:center;">
         <div><div style="font-size:11px;color:#9fe1cb;">RECOMMENDED MONTHLY SAVINGS</div><div style="font-size:18px;font-weight:500;color:#fff;">${heroSave > 0 ? '+' + money(heroSave) : money(heroSave)}/mo</div></div>
         <div style="width:0.5px;height:30px;background:rgba(255,255,255,.2);"></div>
-        <div><div style="font-size:11px;color:#9fe1cb;">5-YEAR INTEREST SAVED</div><div style="font-size:18px;font-weight:500;color:#fff;">${money(heroInt5)}</div></div>
+        <div><div style="font-size:11px;color:#9fe1cb;">5-YEAR TOTAL SAVINGS</div><div style="font-size:18px;font-weight:500;color:#fff;">${money(heroInt5)}</div></div>
         ${heroCash > 0 ? `<div style="width:0.5px;height:30px;background:rgba(255,255,255,.2);"></div><div><div style="font-size:11px;color:#9fe1cb;">CASH TO CLIENT</div><div style="font-size:18px;font-weight:500;color:#fff;">${money(heroCash)}</div></div>` : ''}
       </div>
       <table>
