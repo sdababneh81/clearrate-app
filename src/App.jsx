@@ -9,7 +9,7 @@ import { analyzeDebt } from './utils/debtOptimizer';
 import { generateScenarios } from './utils/scenarioEngine';
 import { calcPI, reverseEngineerTerm } from './utils/mortgageCalc';
 
-const STEPS = ['Upload', 'Client Profile', 'Debts', 'Goals & Programs', 'Analysis'];
+const STEPS = ['Upload', 'Current Loan', 'Property', 'Debts', 'Veteran', 'Programs & Goals', 'Analysis'];
 
 // Cash-out LTV ceiling by route. Veterans go VA (90%); everyone else is Conv/FHA (80%).
 // Used to hard-block checking debts that would push the new loan past the product max.
@@ -380,9 +380,11 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
 
   const canProceed = (s) => {
     if (s === 0) return creditStatus === 'success';
-    if (s === 1) return !!(profile.currentBalance && profile.currentRate && (profile.currentTermRemaining || calculatedTerm) && profile.estimatedValue && isVeteran !== null);
-    if (s === 2) return true;
-    if (s === 3) return selectedPrograms.length > 0;
+    if (s === 1) return !!(profile.currentBalance && profile.currentRate && (profile.currentTermRemaining || calculatedTerm));
+    if (s === 2) return !!profile.estimatedValue;
+    if (s === 3) return true;
+    if (s === 4) return isVeteran !== null;
+    if (s === 5) return selectedPrograms.length > 0;
     return true;
   };
 
@@ -432,7 +434,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
       // appropriate state (scenarios, low-rate guidance, all-negative notice, or a
       // clear error) based on res.status — we never leave the user on a blank screen.
       setResult(res);
-      setStep(4);
+      setStep(6);
       setGenerating(false);
     } catch (e) {
       console.error('[App] Generate failed:', e);
@@ -633,7 +635,7 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
       autoSaveRef.current.savedRef = snap.runRef || file.run_ref || null;
       setShowFiles(false);
       setResult(null);
-      setStep(edit ? 1 : 4);
+      setStep(edit ? 1 : 6);
       if (!edit) {
         setTimeout(() => regenerateFromState(snap), 0);
       }
@@ -864,7 +866,12 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                 </div>
               )}
             </Card>
+          </div>
+        )}
 
+        {/* STEP 2 — Property */}
+        {step === 2 && (
+          <div className="space-y-4">
             {/* Property & Client */}
             <Card title="Property & Client">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
@@ -935,7 +942,12 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
                 </Field>
               </div>
             </Card>
+          </div>
+        )}
 
+        {/* STEP 4 — Veteran */}
+        {step === 4 && (
+          <div className="space-y-4">
             {/* Veteran Status */}
             <Card title="Veteran Status">
               <div className="flex items-start gap-3 mb-4">
@@ -965,8 +977,8 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
           </div>
         )}
 
-        {/* STEP 2 — Debts */}
-        {step === 2 && (
+        {/* STEP 3 — Debts */}
+        {step === 3 && (
           <Card title="Select Debts to Pay Off at Closing">
             <div className="mb-4 bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
               <strong>Smart recommendations shown for each debt.</strong> Defaults reflect recommendation — override as needed.
@@ -979,8 +991,8 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
           </Card>
         )}
 
-        {/* STEP 3 — Goals */}
-        {step === 3 && (
+        {/* STEP 5 — Programs & Goals */}
+        {step === 5 && (
           <div className="space-y-4">
 
             {/* Pricing Strategy — compact row at top */}
@@ -1120,8 +1132,8 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
           </div>
         )}
 
-        {/* STEP 4 — Analysis */}
-        {step === 4 && result && (
+        {/* STEP 6 — Analysis */}
+        {step === 6 && result && (
           <AnalysisReport
             result={result}
             clientProfile={{ ...profile, currentBalance: parseFloat(profile.currentBalance), currentRate: parseFloat(profile.currentRate), escrow: parseFloat(profile.escrow) || 0, titleCharges: parseFloat(profile.titleCharges) || 0 }}
@@ -1141,19 +1153,19 @@ export default function App({ user, profile: userProfile, activeRateSheet, crmSe
             className="flex items-center gap-2 px-5 py-2.5 border border-gray-300 rounded-xl text-sm font-semibold text-gray-600 disabled:opacity-40 hover:bg-gray-50 transition-colors">
             <ChevronLeft className="w-4 h-4" /> Back
           </button>
-          {step < 3 && (
+          {step < 5 && (
             <button onClick={() => canProceed(step) && setStep(s => s + 1)} disabled={!canProceed(step)}
               className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:bg-blue-700 transition-colors">
               Continue <ChevronRight className="w-4 h-4" />
             </button>
           )}
-          {step === 3 && (
-            <button onClick={handleGenerate} disabled={generating || !canProceed(3)}
+          {step === 5 && (
+            <button onClick={handleGenerate} disabled={generating || !canProceed(5)}
               className="flex items-center gap-2 px-7 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:bg-green-700 transition-colors">
               {generating ? <><Loader className="w-4 h-4 animate-spin" /> Generating…</> : <><DollarSign className="w-4 h-4" /> Generate Analysis</>}
             </button>
           )}
-          {step === 4 && (
+          {step === 6 && (
             <div className="flex items-center gap-2">
               {(result?.runRef || currentRunRef) && (
                 <span className="font-mono text-xs font-semibold text-gray-500 bg-gray-100 border border-gray-200 rounded-lg px-2.5 py-1.5" title="Run reference — use this to find this analysis later">
